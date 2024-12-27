@@ -1,0 +1,18 @@
+[project]
+name = "less_slow"
+version = "0.1.0"
+description = "Microbenchmarks for a performance-first mindset in Python"
+authors = [
+    { name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com" },
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["pytest", "pytest-benchmark"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
