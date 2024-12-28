@@ -79,10 +79,10 @@ def f64_sine_maclaurin_powless(x: float) -> float:
     return x - (x3 / 6.0) + (x5 / 120.0)
 
 
-# Let's define a couple of helper functions to run benchmarks on these functions,
-# and compare their performance on 10k random floats in [0, 2π]. We can also
-# use Numba JIT to compile these functions to machine code, and compare the
-# performance of the JIT-compiled functions with the standard Python functions.
+# ? Let's define a couple of helper functions to run benchmarks on these functions,
+# ? and compare their performance on 10k random floats in [0, 2π]. We can also
+# ? use Numba JIT to compile these functions to machine code, and compare the
+# ? performance of the JIT-compiled functions with the standard Python functions.
 
 numba_installed = False
 try:
@@ -493,3 +493,101 @@ def test_pipeline_async(benchmark):
 # ? or __84x__ faster than the fastest Python implementation here.
 
 # endregion: Pipelines and Abstractions
+
+# region: Structures, Tuples, ADTs, AOS, SOA
+
+# region: Composite Structs
+
+# ? Python has many ways of defining composite objects. The most common
+# ? are tuples, dictionaries, named-tuples, dataclasses, and classes.
+# ? Let's compare them by assembling a simple composite of numeric values.
+# ?
+# ? We prefer `float` and `bool` fields as the most predictable Python types,
+# ? as the `int` integers in Python involve a lot of additional logic for
+# ? arbitrary-precision arithmetic, which can affect the latencies.
+
+from dataclasses import dataclass  # noqa: E402
+from collections import namedtuple  # noqa: E402
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_tuple(benchmark):
+    def kernel():
+        point = (1.0, 2.0, True)
+        return point[0] + point[1]
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_dict(benchmark):
+    def kernel():
+        point = {"x": 1.0, "y": 2.0, "flag": True}
+        return point["x"] + point["y"]
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+class PointClass:
+    def __init__(self, x: float, y: float, flag: bool) -> None:
+        self.x = x
+        self.y = y
+        self.flag = flag
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_class(benchmark):
+    def kernel():
+        point = PointClass(1.0, 2.0, True)
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@dataclass
+class PointDataclass:
+    x: float
+    y: float
+    flag: bool
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_dataclass(benchmark):
+    def kernel():
+        point = PointDataclass(1.0, 2.0, True)
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+PointNamedtuple = namedtuple("PointNamedtuple", ["x", "y", "flag"])
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_namedtuple(benchmark):
+    def kernel():
+        point = PointNamedtuple(1.0, 2.0, True)
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+# ? Interestingly, the `namedtuple`, that is often believed to be a
+# ? performance-oriented choice, is 50% slower than both `dataclass` and
+# ? the custom class... which are in turn slower than a simple `dict`
+# ? with the same string fields!
+# ?
+# ? - Tuple: 47ns
+# ? - Dict:  101ns
+# ? - Dataclass: 122ns
+# ? - Class: 125ns
+# ? - Namedtuple: 183ns
+
+# endregion: Composite Structs
+
+# endregion: Structures, Tuples, ADTs, AOS, SOA
