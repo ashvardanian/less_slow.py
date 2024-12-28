@@ -9,7 +9,9 @@ Much of modern code suffers from common pitfalls: bugs, security vulnerabilities
 This repository offers practical examples of writing efficient Python code.
 The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism. Some of the highlights include:
 
-- 
+- Using callbacks, lambdas, and `yield`-ing functions are much faster than iterator-based routines, unlike Rust and C++.
+- NumPy-based logic can be much slower than `math` functions depending on the shape of the input.
+- JIT compilers like Numba can make your code 2x slower, even if the kernels are precompiled if they are short.
 
 To read, jump to the `less_slow.py` source file and read the code snippets and comments.
 

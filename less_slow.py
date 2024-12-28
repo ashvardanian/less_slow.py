@@ -5,18 +5,193 @@
 less_slow.py
 ============
 
-Microbenchmarks to build a performance-first mindset in Python.
-"""
+Micro-benchmarks to build a performance-first mindset in Python.
 
+This project is a spiritual brother to `less_slow.cpp` for C++20,
+and `less_slow.rs` for Rust. Unlike low-level systems languages,
+Python is a high-level with significant runtime overheads, and
+no obvious way to predict the performance of code.
+
+Moreover, the performance of different language and library components
+can vary significantly between consecutive Python versions. That's
+true for both small numeric operations, and high-level abstractions,
+like iterators, generators, and async code.
+"""
+import pytest
+import numpy as np
 
 # region: Numerics
 
 # region: Accuracy vs Efficiency of Standard Libraries
 
+# ? Numerical computing is a core subject in high-performance computing (HPC)
+# ? research and graduate studies, yet its foundational concepts are more
+# ? accessible than they seem. Let's start with one of the most basic
+# ? operations — computing the __sine__ of a number.
+
+import math
+from typing import Tuple
+
+
+def f64_sine_math(x: float) -> float:
+    return math.sin(x)
+
+
+def f64_sine_numpy(x: float) -> float:
+    return np.sin(x)
+
+
+# ? NumPy is the de-facto standard for numerical computing in Python, and
+# ? it's known for its speed and simplicity. However, it's not always the
+# ? fastest option for simple operations like sine, cosine, or exponentials.
+# ?
+# ? NumPy lacks hot-path optimizations if the input is a single scalar value,
+# ? and it's often slower than the standard math library for such cases:
+# ?
+# ?  - math.sin:  620us
+# ?  - np.sin:    4200us
+# ?
+# ? NumPy, of course, becomes much faster when the input is a large array,
+# ? as opposed to a single scalar value.
+# ?
+# ? When absolute bit-accuracy is not required, it's often possible to
+# ? approximate mathematical functions using simpler, faster operations.
+# ? For example, the Maclaurin series for sine:
+# ?
+# ?   sin(x) ≈ x - (x^3)/3! + (x^5)/5! - (x^7)/7! + ...
+# ?
+# ? is a simple polynomial approximation that converges quickly for small x.
+# ? Both can be implemented in Python, NumPy, or Numba JIT, and benchmarked.
+
+
+def f64_sine_math_maclaurin(x: float) -> float:
+    return x - math.pow(x, 3) / 6.0 + math.pow(x, 5) / 120.0
+
+
+def f64_sine_numpy_maclaurin(x: float) -> float:
+    return x - np.pow(x, 3) / 6.0 + np.pow(x, 5) / 120.0
+
+
+def f64_sine_maclaurin_powless(x: float) -> float:
+    x2 = x * x
+    x3 = x2 * x
+    x5 = x3 * x2
+    return x - (x3 / 6.0) + (x5 / 120.0)
+
+
+# Let's define a couple of helper functions to run benchmarks on these functions,
+# and compare their performance on 10k random floats in [0, 2π]. We can also
+# use Numba JIT to compile these functions to machine code, and compare the
+# performance of the JIT-compiled functions with the standard Python functions.
+
+numba_installed = False
+try:
+    import numba
+
+    numba_installed = True
+except ImportError:
+    pass  # skip if numba is not installed
+
+
+def _f64_sine_run_benchmark_on_each(benchmark, sin_fn):
+    """Applies `sin_fn` to 10k random floats in [0, 2π] individually."""
+    inputs = np.random.rand(10_000)  # 10k random floats
+    inputs = inputs.astype(np.float64) * 2 * np.pi  # [0, 2π]
+
+    def call_sin_on_all():
+        for x in inputs:
+            sin_fn(x)
+
+    result = benchmark(call_sin_on_all)
+    return result
+
+
+def _f64_sine_run_benchmark_on_all(benchmark, sin_fn):
+    """Applies `sin_fn` to 10k random floats in [0, 2π] all at once."""
+    inputs = np.random.rand(10_000)  # 10k random floats
+    inputs = inputs.astype(np.float64) * 2 * np.pi  # [0, 2π]
+    call_sin_on_all = lambda: sin_fn(inputs)  # noqa: E731
+    result = benchmark(call_sin_on_all)
+    return result
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_math(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_math)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_numpy(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_numpy)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_maclaurin_math(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_math_maclaurin)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_maclaurin_numpy(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_numpy_maclaurin)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_maclaurin_powless(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_maclaurin_powless)
+
+
+@pytest.mark.skipif(not numba_installed, reason="Numba not installed")
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_jit(benchmark):
+    sin_fn = numba.njit(f64_sine_math)
+    sin_fn(0.0)  # trigger compilation
+    _f64_sine_run_benchmark_on_each(benchmark, sin_fn)
+
+
+@pytest.mark.skipif(not numba_installed, reason="Numba not installed")
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_maclaurin_jit(benchmark):
+    sin_fn = numba.njit(f64_sine_math_maclaurin)
+    sin_fn(0.0)  # trigger compilation
+    _f64_sine_run_benchmark_on_each(benchmark, sin_fn)
+
+
+@pytest.mark.skipif(not numba_installed, reason="Numba not installed")
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_maclaurin_powless_jit(benchmark):
+    sin_fn = numba.njit(f64_sine_maclaurin_powless)
+    sin_fn(0.0)  # trigger compilation
+    _f64_sine_run_benchmark_on_each(benchmark, sin_fn)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sines_numpy(benchmark):
+    _f64_sine_run_benchmark_on_all(benchmark, f64_sine_numpy)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sines_maclaurin_numpy(benchmark):
+    _f64_sine_run_benchmark_on_all(benchmark, f64_sine_numpy_maclaurin)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sines_maclaurin_powless(benchmark):
+    _f64_sine_run_benchmark_on_all(benchmark, f64_sine_maclaurin_powless)
+
+
+# ? The results are somewhat shocking!
+# ?
+# ? `f64_sine_maclaurin_powless` and `test_f64_sine_maclaurin_numpy` are
+# ? both the fastest and one of the slowest implementations, depending on
+# ? the input shape - scalar or array: 29us vs 2610us.
+# ?
+# ? This little benchmark is enough to understand, why Python is broadly
+# ? considered a "glue" language for various native languages and pre-compiled
+# ? libraries for batch/bulk processing.
+
 # endregion: Accuracy vs Efficiency of Standard Libraries
 
 # endregion: Numerics
-
 
 # region: Pipelines and Abstractions
 
@@ -55,7 +230,7 @@ def is_power_of_three(x: int) -> bool:
 
 # region: Callbacks
 
-from typing import Callable, Tuple
+from typing import Callable  # noqa: E402
 
 
 def prime_factors_callback(number: int, callback: Callable[[int], None]) -> None:
@@ -88,9 +263,9 @@ def pipeline_callbacks() -> Tuple[int, int]:
 # endregion: Callbacks
 
 # region: Generators
-from typing import Generator
-from itertools import chain
-from functools import reduce
+from typing import Generator  # noqa: E402
+from itertools import chain  # noqa: E402
+from functools import reduce  # noqa: E402
 
 
 def prime_factors_generator(number: int) -> Generator[int, None, None]:
@@ -163,14 +338,15 @@ def pipeline_iterators() -> Tuple[int, int]:
 # endregion: Iterators
 
 # endregion: Polymorphic
-from typing import List
+from typing import List  # noqa: E402
+from abc import ABC, abstractmethod  # noqa: E402
 
 
-class PipelineStage:
+class PipelineStage(ABC):
     """Base pipeline stage, mimicking a C++-style virtual interface."""
 
-    def process(self, data: List[int]) -> None:
-        raise NotImplementedError
+    @abstractmethod
+    def process(self, data: List[int]) -> None: ...
 
 
 class ForRangeStage(PipelineStage):
@@ -225,26 +401,27 @@ def pipeline_dynamic_dispatch() -> Tuple[int, int]:
 
 # region: Async Generators
 
-import asyncio
+import asyncio  # noqa: E402
+from typing import AsyncGenerator  # noqa: E402
 
 
-async def for_range_async(start: int, end: int) -> Generator[int, None, None]:
+async def for_range_async(start: int, end: int) -> AsyncGenerator[int, None]:
     """Async generator that yields [start..end]."""
     for value in range(start, end + 1):
         yield value
 
 
-async def filter_async(generator: asyncio.coroutine, predicate: Callable[[int], bool]):
+async def filter_async(generator, predicate: Callable[[int], bool]):
     """Async generator that yields values from `generator` that do NOT satisfy `predicate`."""
     async for value in generator:
         if not predicate(value):
             yield value
 
 
-async def prime_factors_async(generator: asyncio.coroutine):
+async def prime_factors_async(generator):
     """Async generator that yields all prime factors of the values coming from `generator`."""
     async for val in generator:
-        for factor in prime_factors_iterator(val):
+        for factor in prime_factors_generator(val):
             yield factor
 
 
@@ -276,6 +453,12 @@ def test_pipeline_callbacks(benchmark):
 
 
 @pytest.mark.benchmark(group="pipelines")
+def test_pipeline_generators(benchmark):
+    result = benchmark(pipeline_generators)
+    assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
+
+
+@pytest.mark.benchmark(group="pipelines")
 def test_pipeline_iterators(benchmark):
     result = benchmark(pipeline_iterators)
     assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
@@ -291,9 +474,22 @@ def test_pipeline_dynamic_dispatch(benchmark):
 @pytest.mark.benchmark(group="pipelines")
 def test_pipeline_async(benchmark):
     """Benchmark the async-generators pipeline."""
-    run_async = lambda: asyncio.run(pipeline_async())
+    run_async = lambda: asyncio.run(pipeline_async())  # noqa: E731
     result = benchmark(run_async)
     assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
 
+
+# ? The results, as expected, are much slower than in similar pipelines
+# ? written in C++ or Rust. However, the iterators, don't seem like a
+# ? good design choice in Python!
+# ?
+# ?  - Callbacks: 16.8ms
+# ?  - Generators: 23.3ms
+# ?  - Iterators: 31.8ms
+# ?  - Polymorphic: 33.2ms
+# ?  - Async: 97.0ms
+# ?
+# ? For comparison, a fast C++/Rust implementation would take 200ns,
+# ? or __84x__ faster than the fastest Python implementation here.
 
 # endregion: Pipelines and Abstractions
