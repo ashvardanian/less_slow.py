@@ -511,16 +511,6 @@ from collections import namedtuple  # noqa: E402
 
 
 @pytest.mark.benchmark(group="composite-structs")
-def test_structs_tuple(benchmark):
-    def kernel():
-        point = (1.0, 2.0, True)
-        return point[0] + point[1]
-
-    result = benchmark(kernel)
-    assert result == 3.0
-
-
-@pytest.mark.benchmark(group="composite-structs")
 def test_structs_dict(benchmark):
     def kernel():
         point = {"x": 1.0, "y": 2.0, "flag": True}
@@ -577,12 +567,32 @@ def test_structs_namedtuple(benchmark):
     assert result == 3.0
 
 
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_tuple_indexing(benchmark):
+    def kernel():
+        point = (1.0, 2.0, True)
+        return point[0] + point[1]
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_tuple_unpacking(benchmark):
+    def kernel():
+        x, y, _ = (1.0, 2.0, True)
+        return x + y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
 # ? Interestingly, the `namedtuple`, that is often believed to be a
 # ? performance-oriented choice, is 50% slower than both `dataclass` and
 # ? the custom class... which are in turn slower than a simple `dict`
 # ? with the same string fields!
 # ?
-# ? - Tuple: 47ns
+# ? - Tuple: 47ns (indexing) vs 43ns (unpacking)
 # ? - Dict:  101ns
 # ? - Dataclass: 122ns
 # ? - Class: 125ns
