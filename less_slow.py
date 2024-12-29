@@ -617,7 +617,7 @@ def test_structs_tuple_unpacking(benchmark):
 
 
 @pytest.mark.benchmark(group="composite-structs-access")
-def test_structs_dict_access(benchmark):
+def test_structs_access_dict(benchmark):
     point = {"x": 1.0, "y": 2.0, "flag": True}
 
     def kernel():
@@ -628,7 +628,7 @@ def test_structs_dict_access(benchmark):
 
 
 @pytest.mark.benchmark(group="composite-structs-access")
-def test_structs_class_access(benchmark):
+def test_structs_access_class(benchmark):
     point = PointClass(1.0, 2.0, True)
 
     def kernel():
@@ -639,7 +639,7 @@ def test_structs_class_access(benchmark):
 
 
 @pytest.mark.benchmark(group="composite-structs-access")
-def test_structs_dataclass_access(benchmark):
+def test_structs_access_dataclass(benchmark):
     point = PointDataclass(1.0, 2.0, True)
 
     def kernel():
@@ -650,7 +650,7 @@ def test_structs_dataclass_access(benchmark):
 
 
 @pytest.mark.benchmark(group="composite-structs-access")
-def test_structs_slots_dataclass_access(benchmark):
+def test_structs_access_slots_dataclass(benchmark):
     point = PointSlotsDataclass(1.0, 2.0, True)
 
     def kernel():
@@ -661,7 +661,7 @@ def test_structs_slots_dataclass_access(benchmark):
 
 
 @pytest.mark.benchmark(group="composite-structs-access")
-def test_structs_namedtuple_access(benchmark):
+def test_structs_access_namedtuple(benchmark):
     point = PointNamedtuple(1.0, 2.0, True)
 
     def kernel():
@@ -672,7 +672,7 @@ def test_structs_namedtuple_access(benchmark):
 
 
 @pytest.mark.benchmark(group="composite-structs-access")
-def test_structs_tuple_indexing_access(benchmark):
+def test_structs_access_tuple_indexing(benchmark):
     point = (1.0, 2.0, True)
 
     def kernel():
@@ -683,7 +683,7 @@ def test_structs_tuple_indexing_access(benchmark):
 
 
 @pytest.mark.benchmark(group="composite-structs-access")
-def test_structs_tuple_unpacking_access(benchmark):
+def test_structs_access_tuple_unpacking(benchmark):
     x, y, _ = (1.0, 2.0, True)
 
     def kernel():
