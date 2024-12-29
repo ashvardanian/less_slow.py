@@ -25,3 +25,17 @@ If you are familiar with Python and want to review code and measurements as you 
 ```sh
 pytest less_slow.py
 ```
+
+## Running with `uv`
+
+If you have `uv` installed, you can run the benchmarks with the following command.
+
+```sh
+uv run --python=">=3.10" --no-sync \
+--with "pytest" \
+--with "pytest-benchmark" \
+--with "numpy" \
+--with "pandas" \
+--with "pyarrow" \
+pytest -ra -q less_slow.py
+```
