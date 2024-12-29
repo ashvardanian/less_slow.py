@@ -1,0 +1,14 @@
+# Core dependencies
+pytest
+pytest-benchmark
+
+# Numerics
+numpy
+numba
+
+# Composite structures and type checking
+pydantic
+attrs
+
+# Heterogeneous data structures
+pandas
