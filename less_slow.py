@@ -614,6 +614,101 @@ def test_structs_tuple_unpacking(benchmark):
 # ? - Class: 125ns
 # ? - Namedtuple: 183ns
 
+
+@pytest.mark.benchmark(group="composite-structs-access")
+def test_structs_dict_access(benchmark):
+    point = {"x": 1.0, "y": 2.0, "flag": True}
+
+    def kernel():
+        return point["x"] + point["y"]
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs-access")
+def test_structs_class_access(benchmark):
+    point = PointClass(1.0, 2.0, True)
+
+    def kernel():
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs-access")
+def test_structs_dataclass_access(benchmark):
+    point = PointDataclass(1.0, 2.0, True)
+
+    def kernel():
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs-access")
+def test_structs_slots_dataclass_access(benchmark):
+    point = PointSlotsDataclass(1.0, 2.0, True)
+
+    def kernel():
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs-access")
+def test_structs_namedtuple_access(benchmark):
+    point = PointNamedtuple(1.0, 2.0, True)
+
+    def kernel():
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs-access")
+def test_structs_tuple_indexing_access(benchmark):
+    point = (1.0, 2.0, True)
+
+    def kernel():
+        return point[0] + point[1]
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@pytest.mark.benchmark(group="composite-structs-access")
+def test_structs_tuple_unpacking_access(benchmark):
+    x, y, _ = (1.0, 2.0, True)
+
+    def kernel():
+        return x + y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+# ? When accessing pre-constructed objects, the performance gap narrows
+# ? significantly, and some relationships even reverse:
+# ?
+# ? - Tuple unpacking: 41ns
+# ? - Slots dataclass: 44ns
+# ? - Regular class: 45ns
+# ? - Regular dataclass: 45ns
+# ? - Tuple indexing: 46ns
+# ? - Dict: 51ns
+# ? - Namedtuple: 59ns
+# ?
+# ? The tuple unpacking is still the fastest, but slots dataclasses are now
+# ? very competitive, beating tuple indexing. The dict access is now
+# ? slower than most alternatives, showing that the initial construction
+# ? overhead isn't everything. Namedtuples are still the slowest.
+
+
 # endregion: Composite Structs
 
 # region: Heterogenous Collections
