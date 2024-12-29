@@ -596,6 +596,49 @@ def test_structs_tuple_unpacking(benchmark):
 # ? - Dataclass: 122ns
 # ? - Class: 125ns
 # ? - Namedtuple: 183ns
+# ?
+# ? None of those structures validates the types of the fields, so
+# ? many Python developers resort to external libraries for that.
+# ?
+# ? - pydantic: over 6 Million downloads per day
+# ? - attrs: over 5 Million downloads per day
+
+from pydantic import BaseModel  # noqa: E402
+from attrs import define, field, validators  # noqa: E402
+
+
+class PointPydantic(BaseModel):
+    x: float
+    y: float
+    flag: bool
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_pydantic(benchmark):
+    def kernel():
+        point = PointPydantic(x=1.0, y=2.0, flag=True)
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
+@define
+class PointAttrs:
+    x: float = field(validator=validators.instance_of(float))
+    y: float = field(validator=validators.instance_of(float))
+    flag: bool = field(validator=validators.instance_of(bool))
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_attrs(benchmark):
+    def kernel():
+        point = PointAttrs(1.0, 2.0, True)
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
 
 # endregion: Composite Structs
 
