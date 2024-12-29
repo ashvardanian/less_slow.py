@@ -553,8 +553,9 @@ def test_structs_dataclass(benchmark):
     assert result == 3.0
 
 
-@dataclass(slots=True)
+@dataclass
 class PointSlotsDataclass:
+    __slots__ = ("x", "y", "flag")
     x: float
     y: float
     flag: bool
