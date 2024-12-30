@@ -25,3 +25,22 @@ If you are familiar with Python and want to review code and measurements as you 
 ```sh
 pytest less_slow.py
 ```
+
+## Running benchmarks with `uv`
+
+If you have `uv` installed, you can run the benchmark script with it. This also
+allows running the script with different Python versions. Here is an example of
+running the script with Python 3.12.
+
+The `--no-sync` flag is used to prevent `uv` from creating an uv.lock file or
+modifying an existing `.venv` folder.
+
+```sh
+uv run --python="3.12" --no-sync \
+--with "pytest" \
+--with "pytest-benchmark" \
+--with "numpy" \
+--with "pandas" \
+--with "pyarrow" \
+pytest -ra -q less_slow.py
+```
