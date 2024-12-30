@@ -611,6 +611,7 @@ def test_structs_tuple_unpacking(benchmark):
 # ?
 # ? - Tuple: 47ns (indexing) vs 43ns (unpacking)
 # ? - Dict:  101ns
+# ? - Slots Dataclass: 112ns
 # ? - Dataclass: 122ns
 # ? - Class: 125ns
 # ? - Namedtuple: 183ns
