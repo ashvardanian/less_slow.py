@@ -553,6 +553,24 @@ def test_structs_dataclass(benchmark):
     assert result == 3.0
 
 
+@dataclass
+class PointSlotsDataclass:
+    __slots__ = ("x", "y", "flag")
+    x: float
+    y: float
+    flag: bool
+
+
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_slots_dataclass(benchmark):
+    def kernel():
+        point = PointSlotsDataclass(1.0, 2.0, True)
+        return point.x + point.y
+
+    result = benchmark(kernel)
+    assert result == 3.0
+
+
 PointNamedtuple = namedtuple("PointNamedtuple", ["x", "y", "flag"])
 
 
@@ -593,6 +611,7 @@ def test_structs_tuple_unpacking(benchmark):
 # ?
 # ? - Tuple: 47ns (indexing) vs 43ns (unpacking)
 # ? - Dict:  101ns
+# ? - Slots Dataclass: 112ns
 # ? - Dataclass: 122ns
 # ? - Class: 125ns
 # ? - Namedtuple: 183ns
