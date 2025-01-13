@@ -25,6 +25,7 @@
     "popcountll",
     "powless",
     "prefetcher",
+    "pyproject",
     "reorderable",
     "SLEEF",
     "StringZilla",
