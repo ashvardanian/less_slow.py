@@ -622,7 +622,15 @@ def test_structs_tuple_unpacking(benchmark):
 # ? - pydantic: over 6 Million downloads per day
 # ? - attrs: over 5 Million downloads per day
 
-from pydantic import BaseModel  # noqa: E402
+pydantic_installed = False
+try:
+    from pydantic import BaseModel  # noqa: E402
+
+    pydantic_installed = True
+except ImportError:
+    BaseModel = dict
+
+
 from attrs import define, field, validators  # noqa: E402
 
 
@@ -632,6 +640,7 @@ class PointPydantic(BaseModel):
     flag: bool
 
 
+@pytest.mark.skipif(not pydantic_installed, reason="Pydantic not installed")
 @pytest.mark.benchmark(group="composite-structs")
 def test_structs_pydantic(benchmark):
     def kernel():
@@ -673,7 +682,11 @@ def test_structs_attrs(benchmark):
 # region: Tables and Arrays
 
 import pandas as pd  # noqa: E402
-import pyarrow as pa  # noqa: E402
+
+try:
+    import pyarrow as pa  # noqa: E402
+except ImportError:
+    pass
 
 # endregion: Tables and Arrays
 

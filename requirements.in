@@ -4,11 +4,12 @@ pytest-benchmark
 
 # Numerics
 numpy
-numba
+numba ; python_version <= '3.12'
 
 # Composite structures and type checking
-pydantic
+pydantic ; python_version <= '3.13'
 attrs
 
 # Heterogeneous data structures
 pandas
+pyarrow ; python_version <= '3.13'
