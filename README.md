@@ -2,6 +2,7 @@
 
 > The spiritual little brother of [`less_slow.cpp`](https://github.com/ashvardanian/less_slow.cpp).
 > Assuming Python is used in a different setting than C++, this repository focuses more on scripting, tool integration, and data processing.
+> The benchmarks in this repository don't aim to cover every topic entirely, but they help form a mindset and intuition for performance-oriented software design.
 
 Much of modern code suffers from common pitfalls: bugs, security vulnerabilities, and performance bottlenecks. University curricula often teach outdated concepts, while bootcamps oversimplify crucial software development principles.
 
@@ -20,27 +21,26 @@ To read, jump to the `less_slow.py` source file and read the code snippets and c
 
 ## Reproducing the Benchmarks
 
-If you are familiar with Python and want to review code and measurements as you read, you can clone the repository and execute the following commands.
+If you are familiar with Python and want to review code and measurements as you read, you can clone the repository and execute the following commands to install the dependencies and run the benchmarks in your local environment.
 
 ```sh
-pytest less_slow.py
+git clone https://github.com/ashvardanian/less_slow.py.git # Clone the repository
+cd less_slow.py                                            # Change the directory
+pip install -r requirements.txt                            # Install the dependencies
+pytest less_slow.py                                        # Run the benchmarks
 ```
 
-## Running benchmarks with `uv`
-
-If you have `uv` installed, you can run the benchmark script with it. This also
-allows running the script with different Python versions. Here is an example of
-running the script with Python 3.12.
-
-The `--no-sync` flag is used to prevent `uv` from creating an uv.lock file or
-modifying an existing `.venv` folder.
+Alternatively, consider using `uv` to run the benchmarks in a controlled environment.
 
 ```sh
-uv run --python="3.12" --no-sync \
---with "pytest" \
---with "pytest-benchmark" \
---with "numpy" \
---with "pandas" \
---with "pyarrow" \
+uv run --python="3.14" --no-sync --with-requirements requirements.in \
 pytest -ra -q less_slow.py
+```
+
+The `--no-sync` flag is used to prevent `uv` from creating a `uv.lock` file or modifying an existing `.venv` folder.
+To extend the current list of dependencies, update the `requirements.in` file and run `uv sync` to update the environment.
+
+```sh
+uv pip compile requirements.in --universal --output-file requirements.txt
+uv pip sync requirements.txt
 ```
