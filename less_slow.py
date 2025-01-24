@@ -434,14 +434,14 @@ async def for_range_async(start: int, end: int) -> AsyncGenerator[int, None]:
 
 
 async def filter_async(generator, predicate: Callable[[int], bool]):
-    """Async generator that yields values from `generator` that do NOT satisfy `predicate`."""
+    """Async generator that forwards `generator` outputs NOT satisfying `predicate`."""
     async for value in generator:
         if not predicate(value):
             yield value
 
 
 async def prime_factors_async(generator):
-    """Async generator that yields all prime factors of the values coming from `generator`."""
+    """Async generator that yields prime factors for outputs of `generator`."""
     async for val in generator:
         for factor in prime_factors_generator(val):
             yield factor
@@ -965,8 +965,6 @@ def test_errors_status(benchmark):
 
 # region: Reflection, Inspection
 
-import inspect  # noqa: E402
-
 # endregion: Reflection, Inspection
 
 # region: Evaluating Strings
@@ -975,7 +973,244 @@ import inspect  # noqa: E402
 
 # endregion: Dynamic Code
 
-# region: External Systems, IO, Networking
+# region: Networking and Databases
+
+# ? When implementing web-applications, Python developers often rush to
+# ? use overloaded high-level frameworks, like Django, Flask, or FastAPI,
+# ? without ever considering a lower-level route.
+# ?
+# ? Let's implement a simple "echo" client and server using Python's
+# ? built-in `socket` module, and compare its performance with a similar
+# ? implementation in the `asyncio` module and FastAPI.
+
+import socket  # for TCP and UDP servers # noqa: E402
+import inspect  # to get the source code of a function # noqa: E402
+import textwrap  # to format the source code # noqa: E402
+import subprocess  # to start a server in a subprocess # noqa: E402
+import sys  # to get the Python executable # noqa: E402
+import time  # sleep for a bit until the socket binds # noqa: E402
+from abc import ABC, abstractmethod  # to define abstract classes # noqa: E402
 
 
-# endregion: External Systems, IO, Networking
+class EchoServer(ABC):
+    """Abstract base class for echo servers."""
+
+    def __init__(self, host: str = "localhost", port: int = 12345):
+        """
+        :param host: The host to bind the server to. Set to '0.0.0.0' to listen on all
+            interfaces. Set to 'localhost' or '127.0.0.1' to listen on the loopback
+            interface.
+        :param port: The port to bind the server to.
+        """
+        self.host = host
+        self.port = port
+
+    @abstractmethod
+    def run(self):
+        """Run the echo server (blocking call)."""
+        pass
+
+
+class TCPEchoServer(EchoServer):
+    """Simple TCP Echo Server."""
+
+    def run(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((self.host, self.port))
+            server.listen()
+            while True:
+                conn, _ = server.accept()
+                with conn:
+                    while True:
+                        data = conn.recv(1024)
+                        if not data:
+                            break
+                        conn.sendall(data)
+
+
+class UDPEchoServer(EchoServer):
+    """Simple UDP Echo Server."""
+
+    def run(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((self.host, self.port))
+            while True:
+                data, addr = server.recvfrom(1024)
+                if not data:
+                    break
+                server.sendto(data, addr)
+
+
+class EchoClient(ABC):
+    """Abstract base class for echo clients."""
+
+    def __init__(
+        self, host: str = "localhost", port: int = 12345, timeout: float = 0.005
+    ):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+
+    @abstractmethod
+    def connect(self):
+        """Establish or prepare the client socket (TCP connect, or just open a UDP socket)."""
+        pass
+
+    @abstractmethod
+    def send_and_receive(self, data: bytes) -> bytes:
+        """Send data and receive its echo."""
+        pass
+
+    @abstractmethod
+    def close(self):
+        """Close the underlying socket."""
+        pass
+
+
+class TCPEchoClient(EchoClient):
+    """TCP Echo Client implementation."""
+
+    def __init__(self, host="localhost", port=12345, timeout=0.005):
+        super().__init__(host, port, timeout)
+        self._sock = None
+
+    def connect(self):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.settimeout(self.timeout)
+        self._sock.connect((self.host, self.port))
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        # For TCP, we just sendall, then recv.
+        self._sock.sendall(data)
+        return self._sock.recv(1024)
+
+    def close(self):
+        if self._sock:
+            self._sock.close()
+            self._sock = None
+
+
+class UDPEchoClient(EchoClient):
+    """UDP Echo Client implementation."""
+
+    def __init__(self, host="localhost", port=12345, timeout=0.005):
+        super().__init__(host, port, timeout)
+        self._sock = None
+
+    def connect(self):
+        # For UDP, "connect" is optional, but let's just open the socket.
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.settimeout(self.timeout)
+        # You can optionally call _sock.connect((host, port)) for "connected" UDP.
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        # For UDP, we must specify the address on sendto unless we've "connected" the socket.
+        self._sock.sendto(data, (self.host, self.port))
+        resp, _ = self._sock.recvfrom(1024)
+        return resp
+
+    def close(self):
+        if self._sock:
+            self._sock.close()
+            self._sock = None
+
+
+class ServerProcess:
+    """
+    Wraps an EchoServer in a subprocess. On __enter__, spawns the server
+    and returns `self`. On __exit__, kills the subprocess.
+    """
+
+    def __init__(self, server: EchoServer):
+        self.server = server
+        self._proc = None
+
+    def __enter__(self):
+        source_code = inspect.getsource(self.server.__class__)
+        # We'll also need the base class if the server references it:
+        base_code = inspect.getsource(EchoServer)
+
+        script = textwrap.dedent(
+            f"""
+            import socket
+
+            {base_code}
+            {source_code}
+
+            if __name__ == "__main__":
+                # Recreate the same server instance and call run()
+                server = {self.server.__class__.__name__}(host={self.server.host!r}, port={self.server.port})
+                server.run()
+        """
+        )
+
+        self._proc = subprocess.Popen([sys.executable, "-c", script])
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._proc:
+            self._proc.kill()
+            self._proc.wait()
+
+
+def profile_echo_latency(
+    benchmark,
+    server_class,
+    client_class,
+    packet_length: int = 1024,
+):
+    """
+    A generic echo latency profiler that uses class-based server/client.
+    """
+
+    packet = b"ping" * (packet_length // 4)
+
+    def setup():
+        # Initialize server and run in a subprocess context
+        server = server_class()
+        context = ServerProcess(server).__enter__()
+
+        # Create client
+        client = client_class()
+        client.connect()
+        time.sleep(0.1)  # short wait to ensure server is listening
+
+        return context, client
+
+    def teardown(resources):
+        context, client = resources
+        client.close()
+        context.__exit__(None, None, None)  # kill the server
+
+    def run(n_iterations):
+        lost_packets = 0
+        context, client = benchmark.state
+
+        for _ in range(n_iterations):
+            try:
+                response = client.send_and_receive(packet)
+                if response != packet:
+                    raise ValueError("Mismatched echo response!")
+            except socket.timeout:
+                lost_packets += 1
+
+        return lost_packets
+
+    # "pedantic" calls setup() once, then calls run() multiple times, then teardown().
+    lost_pkt_count = benchmark.pedantic(run, setup=setup, teardown=teardown)
+    print(f"Lost packets: {lost_pkt_count}")
+
+
+@pytest.mark.benchmark(group="echo")
+def test_tcp_echo_latency(benchmark):
+    profile_echo_latency(benchmark, TCPEchoServer, TCPEchoClient)
+
+
+@pytest.mark.benchmark(group="echo")
+def test_udp_echo_latency(benchmark):
+    profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient)
+
+
+# endregion: Networking and Databases
