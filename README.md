@@ -27,7 +27,8 @@ If you are familiar with Python and want to review code and measurements as you 
 git clone https://github.com/ashvardanian/less_slow.py.git # Clone the repository
 cd less_slow.py                                            # Change the directory
 pip install -r requirements.txt                            # Install the dependencies
-pytest less_slow.py                                        # Run the benchmarks
+pytest less_slow.py                                        # Run all benchmarks
+pytest less_slow.py -x -k echo                             # Filter and stop on failure
 ```
 
 Alternatively, consider using [`uv`](https://docs.astral.sh/uv/getting-started/installation/) to run the benchmarks in a controlled environment.

@@ -1175,19 +1175,18 @@ def profile_echo_latency(
         # Create client
         client = client_class()
         client.connect()
-        time.sleep(0.1)  # short wait to ensure server is listening
+        time.sleep(0.5)  # short wait to ensure server is listening
 
-        return context, client
+        return {"context": context, "client": client}
 
-    def teardown(resources):
-        context, client = resources
+    def teardown(state):
+        context = state["context"]
+        client = state["client"]
         client.close()
         context.__exit__(None, None, None)  # kill the server
 
-    def run(n_iterations):
+    def run(n_iterations, context, client):
         lost_packets = 0
-        context, client = benchmark.state
-
         for _ in range(n_iterations):
             try:
                 response = client.send_and_receive(packet)
@@ -1195,11 +1194,14 @@ def profile_echo_latency(
                     raise ValueError("Mismatched echo response!")
             except socket.timeout:
                 lost_packets += 1
-
         return lost_packets
 
     # "pedantic" calls setup() once, then calls run() multiple times, then teardown().
-    lost_pkt_count = benchmark.pedantic(run, setup=setup, teardown=teardown)
+    lost_pkt_count = benchmark.pedantic(
+        run,
+        setup=setup,
+        teardown=teardown,
+    )
     print(f"Lost packets: {lost_pkt_count}")
 
 
