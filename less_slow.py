@@ -36,6 +36,12 @@ def f64_sine_math(x: float) -> float:
     return math.sin(x)
 
 
+def f64_sine_math_cached(x: float) -> float:
+    # Cache the math.sin function lookup
+    local_sin = math.sin
+    return local_sin(x)
+
+
 def f64_sine_numpy(x: float) -> float:
     return np.sin(x)
 
@@ -76,6 +82,13 @@ def f64_sine_maclaurin_powless(x: float) -> float:
     x3 = x2 * x
     x5 = x3 * x2
     return x - (x3 / 6.0) + (x5 / 120.0)
+
+
+def f64_sine_maclaurin_multiply(x: float) -> float:
+    x2 = x * x
+    x3 = x2 * x
+    x5 = x3 * x2
+    return x - (x3 * 0.1666666667) + (x5 * 0.008333333333)
 
 
 # ? Let's define a couple of helper functions to run benchmarks on these functions,
@@ -120,6 +133,11 @@ def test_f64_sine_math(benchmark):
 
 
 @pytest.mark.benchmark(group="sin")
+def test_f64_sine_math_cached(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_math_cached)
+
+
+@pytest.mark.benchmark(group="sin")
 def test_f64_sine_numpy(benchmark):
     _f64_sine_run_benchmark_on_each(benchmark, f64_sine_numpy)
 
@@ -137,6 +155,11 @@ def test_f64_sine_maclaurin_numpy(benchmark):
 @pytest.mark.benchmark(group="sin")
 def test_f64_sine_maclaurin_powless(benchmark):
     _f64_sine_run_benchmark_on_each(benchmark, f64_sine_maclaurin_powless)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_maclaurin_multiply(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_maclaurin_multiply)
 
 
 @pytest.mark.skipif(not numba_installed, reason="Numba not installed")
