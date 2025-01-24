@@ -1,6 +1,6 @@
 # Core dependencies
 pytest
-pytest-benchmark
+pytest-benchmark @ git+https://github.com/ionelmc/pytest-benchmark.git@master
 
 # Numerics
 numpy

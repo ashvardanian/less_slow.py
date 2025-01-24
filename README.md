@@ -30,10 +30,10 @@ pip install -r requirements.txt                            # Install the depende
 pytest less_slow.py                                        # Run the benchmarks
 ```
 
-Alternatively, consider using `uv` to run the benchmarks in a controlled environment.
+Alternatively, consider using [`uv`](https://docs.astral.sh/uv/getting-started/installation/) to run the benchmarks in a controlled environment.
 
 ```sh
-uv run --python="3.14" --no-sync --with-requirements requirements.in \
+uv run --python="3.12" --no-sync --with-requirements requirements.in \
 pytest -ra -q less_slow.py
 ```
 
