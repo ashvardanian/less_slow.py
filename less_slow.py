@@ -1415,5 +1415,257 @@ def test_batch16_rpc_asyncio_unordered(benchmark):
 # ? - Asyncio Ordered: average 39 us
 # ? - Asyncio Unordered: average 39 us
 # ? - TCP Loopback: average 18 us
+# ?
+# ? This, however, may not be as bad as higher-level frameworks like FastAPI,
+# ? and one of the most common underlying ASGI servers, Uvicorn.
+
+
+class FastAPIEchoServer(EchoServer):
+    """
+    Minimal FastAPI-based HTTP echo server. It exposes a POST /echo endpoint
+    that simply returns the raw request body as-is (using a binary media type).
+    """
+
+    def run(self):
+        import uvicorn
+        from fastapi import FastAPI, Request
+        from fastapi.responses import Response
+
+        app = FastAPI()
+
+        @app.post("/echo")
+        async def echo_endpoint(req: Request):
+            data = await req.body()
+            return Response(content=data, media_type="application/octet-stream")
+
+        uvicorn.run(app, host=self.host, port=self.port, log_level="error")
+
+
+class UvicornEchoServer(EchoServer):
+    """
+    Minimal raw ASGI echo server on /echo. No FastAPI or Starlette, just
+    uvicorn + a single scope check for POST /echo. Returns the request
+    body verbatim with content-type=application/octet-stream.
+    """
+
+    def run(self):
+        import uvicorn
+
+        async def app(scope, receive, send):
+            if scope["type"] == "http":
+                # Check path; if not /echo, return 404
+                if scope.get("path", "") != "/echo":
+                    await send(
+                        {"type": "http.response.start", "status": 404, "headers": []}
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": b"Not Found",
+                            "more_body": False,
+                        }
+                    )
+                    return
+
+                body = b""
+                more_body = True
+                while more_body:
+                    event = await receive()
+                    if event["type"] == "http.request":
+                        body += event.get("body", b"")
+                        more_body = event.get("more_body", False)
+
+                # Echo the body
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [
+                            (b"content-type", b"application/octet-stream"),
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": body,
+                        "more_body": False,
+                    }
+                )
+
+        uvicorn.run(app, host=self.host, port=self.port, log_level="error")
+
+
+class RequestsClient(EchoClient):
+    """
+    A simple requests-based client, calling POST /echo with the raw data in the
+    request body, and returning the response body as bytes.
+    """
+
+    def __init__(self, host="localhost", port=RPC_PORT, timeout=RPC_PACKET_TIMEOUT_SEC):
+        super().__init__(host, port, timeout)
+        self._session = None
+
+    def connect(self):
+        import requests
+
+        self._session = requests.Session()
+        self._session.headers.update({"Content-Type": "application/octet-stream"})
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        url = f"http://{self.host}:{self.port}/echo"
+        resp = self._session.post(url, data=data, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.content
+
+    def close(self):
+        if self._session:
+            self._session.close()
+            self._session = None
+
+
+class HTTPXAsyncEchoClient(EchoClient):
+    """
+    Uses the httpx library in async mode to talk to the /echo endpoint.
+    Batching is done concurrently with asyncio.gather.
+    """
+
+    def __init__(self, host="localhost", port=RPC_PORT, timeout=RPC_PACKET_TIMEOUT_SEC):
+        super().__init__(host, port, timeout)
+        self._loop = None
+        self._client = None
+
+    def connect(self):
+        import httpx
+        import asyncio
+
+        # We'll create a dedicated event loop for this client and
+        # instantiate the AsyncClient inside it.
+        self._loop = asyncio.new_event_loop()
+
+        async def _setup():
+            # Create an AsyncClient with the given timeout and
+            # set headers for sending binary data.
+            client = httpx.AsyncClient(timeout=self.timeout)
+            client.headers.update({"Content-Type": "application/octet-stream"})
+            return client
+
+        self._client = self._loop.run_until_complete(_setup())
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        """
+        Sends a single request and awaits the response using AsyncClient.
+        We wrap it in run_until_complete() for synchronous code compatibility.
+        """
+
+        async def _send_and_receive(d):
+            url = f"http://{self.host}:{self.port}/echo"
+            resp = await self._client.post(url, content=d)
+            resp.raise_for_status()
+            return resp.content
+
+        return self._loop.run_until_complete(_send_and_receive(data))
+
+    def send_and_receive_batch(self, messages: List[bytes]) -> List[bytes]:
+        """
+        Demonstrates concurrent batch logic using asyncio.gather.
+        All requests are fired off in parallel, then we await all responses.
+        """
+        import asyncio
+
+        async def _send_and_receive_batch(msgs: List[bytes]) -> List[bytes]:
+            url = f"http://{self.host}:{self.port}/echo"
+
+            # Build a coroutine for each message
+            async def post(msg: bytes):
+                resp = await self._client.post(url, content=msg)
+                resp.raise_for_status()
+                return resp.content
+
+            # Fire them off concurrently
+            tasks = [post(m) for m in msgs]
+            results = await asyncio.gather(*tasks)
+            return list(results)
+
+        return self._loop.run_until_complete(_send_and_receive_batch(messages))
+
+    def close(self):
+        """
+        Closes the AsyncClient and event loop.
+        """
+        import asyncio
+
+        async def _close():
+            if self._client:
+                await self._client.aclose()
+
+        if self._loop:
+            self._loop.run_until_complete(_close())
+            self._loop.close()
+            self._loop = None
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_fastapi_requests(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        RequestsClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=False,  # ! Requests are typically synchronous
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_fastapi_httpx(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        HTTPXAsyncEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_uvicorn_requests(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        RequestsClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=False,  # ! Requests are typically synchronous
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_uvicorn_httpx(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        HTTPXAsyncEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+# ? The benchmark results are striking. For batch sizes of 16 messages:
+# ?
+# ? - Raw TCP with asyncio: 0.95 milliseconds per batch (59 us per message)
+# ? - Requests+FastAPI/Uvicorn: 7.7 milliseconds per batch (0.5 ms per message)
+# ? - Async HTTPX+FastAPI/Uvicorn: 12.5 milliseconds per batch (0.8 ms per message)
+# ?
+# ? This demonstrates why low-latency systems often avoid HTTP and high-level
+# ? frameworks in favor of raw TCP/UDP, especially for internal services. The
+# ? arguable convenience of FastAPI comes at a significant performance cost -
+# ? about 10x slower than already slow IO stack of Python.
 
 # endregion: Networking and Databases

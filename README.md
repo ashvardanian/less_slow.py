@@ -34,11 +34,15 @@ pytest less_slow.py -x -k echo                             # Filter and stop on 
 Alternatively, consider using [`uv`](https://docs.astral.sh/uv/getting-started/installation/) to run the benchmarks in a controlled environment.
 
 ```sh
-uv run --python="3.12" --no-sync --with-requirements requirements.in \
-pytest -ra -q less_slow.py
+uv run --python="3.12" --no-sync \
+    --with-requirements requirements.in \
+    pytest -ra -q less_slow.py
 ```
 
-The `--no-sync` flag is used to prevent `uv` from creating a `uv.lock` file or modifying an existing `.venv` folder.
+For `pytest`, the `-r` flag can be used to display a "short test summary info" at the end of the test session, making it easy in large test suites to get a clear picture of all failures.
+The `-ra` variant limits the summary only to tests that failed, avoiding "passed" and "passed with outputs" messages.
+
+For `uv`, the `--no-sync` flag is used to prevent `uv` from creating a `uv.lock` file or modifying an existing `.venv` folder.
 To extend the current list of dependencies, update the `requirements.in` file and run `uv sync` to update the environment.
 
 ```sh

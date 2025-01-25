@@ -13,3 +13,9 @@ attrs
 # Heterogeneous data structures
 pandas
 pyarrow ; python_version <= '3.13'
+
+# Networking
+fastapi # HTTP server
+uvicorn # Underlying ASGI server
+requests # HTTP client
+httpx # Alternative HTTP client
