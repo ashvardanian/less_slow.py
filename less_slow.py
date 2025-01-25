@@ -985,17 +985,43 @@ def test_errors_status(benchmark):
 
 import socket  # for TCP and UDP servers # noqa: E402
 import inspect  # to get the source code of a function # noqa: E402
-import textwrap  # to format the source code # noqa: E402
 import subprocess  # to start a server in a subprocess # noqa: E402
 import sys  # to get the Python executable # noqa: E402
 import time  # sleep for a bit until the socket binds # noqa: E402
 from abc import ABC, abstractmethod  # to define abstract classes # noqa: E402
+from typing import Literal  # noqa: E402
+
+# ? The User Datagram Protocol (UDP) is OSI Layer 4 "Transport protocol", and
+# ? should be able to operate on top of any OSI Layer 3 "Network protocol".
+# ?
+# ? In most cases, it operates on top of the Internet Protocol (IP), which can
+# ? have Maximum Transmission Unit (MTU) ranging 20 for IPv4 and 40 for IPv6
+# ? to 65535 bytes. In our case, however, the OSI Layer 2 "Data Link Layer" is
+# ? likely to be Ethernet, which has a MTU of 1500 bytes, but most routers are
+# ? configured to fragment packets larger than 1460 bytes. Hence, our choice!
+RPC_MTU = 1460
+RPC_PORT = 12345
+RPC_PACKET_TIMEOUT_SEC = 0.05
+RPC_BATCH_TIMEOUT_SEC = 0.5
+
+
+def fetch_public_ip() -> str:
+    """
+    Returns the 'default' (outbound) IP address of the current machine.
+    Note that this may be a private IP if behind NAT (it won't be your
+    real public-facing IP if you are behind a router/firewall).
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        # The IP/port here doesn't need to be reachable (we never send data);
+        # we just need the OS to pick a default interface for this "outbound" connection.
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
 
 
 class EchoServer(ABC):
     """Abstract base class for echo servers."""
 
-    def __init__(self, host: str = "localhost", port: int = 12345):
+    def __init__(self, host: str = "0.0.0.0", port: int = RPC_PORT):
         """
         :param host: The host to bind the server to. Set to '0.0.0.0' to listen on all
             interfaces. Set to 'localhost' or '127.0.0.1' to listen on the loopback
@@ -1037,7 +1063,7 @@ class UDPEchoServer(EchoServer):
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server.bind((self.host, self.port))
             while True:
-                data, addr = server.recvfrom(1024)
+                data, addr = server.recvfrom(RPC_MTU)
                 if not data:
                     break
                 server.sendto(data, addr)
@@ -1047,7 +1073,10 @@ class EchoClient(ABC):
     """Abstract base class for echo clients."""
 
     def __init__(
-        self, host: str = "localhost", port: int = 12345, timeout: float = 0.005
+        self,
+        host: str = "localhost",
+        port: int = RPC_PORT,
+        timeout: float = RPC_PACKET_TIMEOUT_SEC,
     ):
         self.host = host
         self.port = port
@@ -1072,7 +1101,12 @@ class EchoClient(ABC):
 class TCPEchoClient(EchoClient):
     """TCP Echo Client implementation."""
 
-    def __init__(self, host="localhost", port=12345, timeout=0.005):
+    def __init__(
+        self,
+        host="localhost",
+        port=RPC_PORT,
+        timeout=RPC_PACKET_TIMEOUT_SEC,
+    ):
         super().__init__(host, port, timeout)
         self._sock = None
 
@@ -1082,9 +1116,8 @@ class TCPEchoClient(EchoClient):
         self._sock.connect((self.host, self.port))
 
     def send_and_receive(self, data: bytes) -> bytes:
-        # For TCP, we just sendall, then recv.
         self._sock.sendall(data)
-        return self._sock.recv(1024)
+        return self._sock.recv(RPC_MTU)
 
     def close(self):
         if self._sock:
@@ -1095,20 +1128,24 @@ class TCPEchoClient(EchoClient):
 class UDPEchoClient(EchoClient):
     """UDP Echo Client implementation."""
 
-    def __init__(self, host="localhost", port=12345, timeout=0.005):
+    def __init__(
+        self,
+        host="localhost",
+        port=RPC_PORT,
+        timeout=RPC_PACKET_TIMEOUT_SEC,
+    ):
         super().__init__(host, port, timeout)
         self._sock = None
 
     def connect(self):
-        # For UDP, "connect" is optional, but let's just open the socket.
+        # For UDP, "connect" isn't needed
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(self.timeout)
-        # You can optionally call _sock.connect((host, port)) for "connected" UDP.
 
     def send_and_receive(self, data: bytes) -> bytes:
         # For UDP, we must specify the address on sendto unless we've "connected" the socket.
         self._sock.sendto(data, (self.host, self.port))
-        resp, _ = self._sock.recvfrom(1024)
+        resp, _ = self._sock.recvfrom(RPC_MTU)
         return resp
 
     def close(self):
@@ -1131,20 +1168,21 @@ class ServerProcess:
         source_code = inspect.getsource(self.server.__class__)
         # We'll also need the base class if the server references it:
         base_code = inspect.getsource(EchoServer)
+        # Recreate an identical server instance in another process and call run()
+        script = f"""
+import socket
+from abc import ABC, abstractmethod
 
-        script = textwrap.dedent(
-            f"""
-            import socket
+RPC_MTU = {RPC_MTU}
+RPC_PORT = {RPC_PORT}
 
-            {base_code}
-            {source_code}
+{base_code}
+{source_code}
 
-            if __name__ == "__main__":
-                # Recreate the same server instance and call run()
-                server = {self.server.__class__.__name__}(host={self.server.host!r}, port={self.server.port})
-                server.run()
-        """
-        )
+if __name__ == "__main__":
+    server = {self.server.__class__.__name__}(host={self.server.host!r}, port={self.server.port})
+    server.run()
+"""
 
         self._proc = subprocess.Popen([sys.executable, "-c", script])
         return self
@@ -1160,59 +1198,79 @@ def profile_echo_latency(
     server_class,
     client_class,
     packet_length: int = 1024,
+    route: Literal["loopback", "public"] = "loopback",
 ):
     """
     A generic echo latency profiler that uses class-based server/client.
     """
 
     packet = b"ping" * (packet_length // 4)
+    address_to_listen = "127.0.0.1" if route == "loopback" else "0.0.0.0"
+    address_to_talk = "127.0.0.1" if route == "loopback" else fetch_public_ip()
+    lost_packets = 0
 
-    def setup():
-        # Initialize server and run in a subprocess context
-        server = server_class()
-        context = ServerProcess(server).__enter__()
+    # Initialize server and run in a subprocess context
+    server = server_class(host=address_to_listen)
+    context = ServerProcess(server).__enter__()
+    time.sleep(0.5)  # short wait to ensure server is listening
 
-        # Create client
-        client = client_class()
-        client.connect()
-        time.sleep(0.5)  # short wait to ensure server is listening
+    # Create client
+    client = client_class(host=address_to_talk)
+    client.connect()
 
-        return {"context": context, "client": client}
+    def runner():
+        nonlocal lost_packets
+        try:
+            response = client.send_and_receive(packet)
+            if response != packet:
+                raise ValueError("Mismatched echo response!")
+        except socket.timeout:
+            lost_packets += 1
 
-    def teardown(state):
-        context = state["context"]
-        client = state["client"]
-        client.close()
-        context.__exit__(None, None, None)  # kill the server
+    benchmark.pedantic(runner, iterations=1, rounds=100_000)
+    benchmark.extra_info["lost_packets"] = lost_packets
 
-    def run(n_iterations, context, client):
-        lost_packets = 0
-        for _ in range(n_iterations):
-            try:
-                response = client.send_and_receive(packet)
-                if response != packet:
-                    raise ValueError("Mismatched echo response!")
-            except socket.timeout:
-                lost_packets += 1
-        return lost_packets
-
-    # "pedantic" calls setup() once, then calls run() multiple times, then teardown().
-    lost_pkt_count = benchmark.pedantic(
-        run,
-        setup=setup,
-        teardown=teardown,
-    )
-    print(f"Lost packets: {lost_pkt_count}")
+    client.close()
+    context.__exit__(None, None, None)  # kill the server
 
 
 @pytest.mark.benchmark(group="echo")
-def test_tcp_echo_latency(benchmark):
-    profile_echo_latency(benchmark, TCPEchoServer, TCPEchoClient)
+def test_rpc_tcp_loopback(benchmark):
+    profile_echo_latency(benchmark, TCPEchoServer, TCPEchoClient, route="loopback")
 
 
 @pytest.mark.benchmark(group="echo")
-def test_udp_echo_latency(benchmark):
-    profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient)
+def test_rpc_udp_loopback(benchmark):
+    profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient, route="loopback")
+
+
+@pytest.mark.benchmark(group="echo")
+def test_rpc_tcp_public(benchmark):
+    profile_echo_latency(benchmark, TCPEchoServer, TCPEchoClient, route="public")
+
+
+@pytest.mark.benchmark(group="echo")
+def test_rpc_udp_public(benchmark):
+    profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient, route="public")
+
+
+# ? There's a clear difference between sending packets via `127.0.0.1` (loopback)
+# ? versus the machine's "public" IP. Loopback is effectively short-circuited in
+# ? software, yielding minimal overhead and tighter latency distributions.
+# ? By contrast, using the "public" IP can trigger NAT hairpin or firewall checks,
+# ? resulting in higher average and more variable latency, especially for UDP.
+# ?
+# ? - TCP Loopback: from 11 us to 142 us worst-case, average 18 us
+# ? - TCP Public: from 13 us to 2'773 us worst-case, average 19 us
+# ? - UDP Loopback: from 15 us to 402 us worst-case, average 19 us
+# ? - UDP Public: from 27 us to 4'790 us worst-case, average 34 us
+# ?
+# ? Sounds interesting? I suggest reading
+# ?
+# ? - "High Performance Browser Networking" by Ilya Grigorik:
+# ?   https://hpbn.co/
+# ? - "Moving past TCP in the data center, part 2" by Jake Edge:
+# ?   https://lwn.net/Articles/914030/
 
 
 # endregion: Networking and Databases
