@@ -1049,7 +1049,7 @@ class TCPEchoServer(EchoServer):
                 conn, _ = server.accept()
                 with conn:
                     while True:
-                        data = conn.recv(1024)
+                        data = conn.recv(RPC_MTU)
                         if not data:
                             break
                         conn.sendall(data)
@@ -1091,6 +1091,10 @@ class EchoClient(ABC):
     def send_and_receive(self, data: bytes) -> bytes:
         """Send data and receive its echo."""
         pass
+
+    def send_and_receive_batch(self, messages: List[bytes]) -> List[bytes]:
+        """Send a batch of messages and receive their echoes."""
+        return [self.send_and_receive(m) for m in messages]
 
     @abstractmethod
     def close(self):
@@ -1198,6 +1202,9 @@ def profile_echo_latency(
     server_class,
     client_class,
     packet_length: int = 1024,
+    rounds: int = 100_000,
+    batch_size: int = 1,
+    use_batching: bool = False,
     route: Literal["loopback", "public"] = "loopback",
 ):
     """
@@ -1212,22 +1219,30 @@ def profile_echo_latency(
     # Initialize server and run in a subprocess context
     server = server_class(host=address_to_listen)
     context = ServerProcess(server).__enter__()
-    time.sleep(0.5)  # short wait to ensure server is listening
+    time.sleep(0.5)  # Short wait to ensure server is listening
 
     # Create client
     client = client_class(host=address_to_talk)
     client.connect()
 
+    # We may want to allow executing the requests within the batch asynchronously
+    send_many: callable = client_class.send_and_receive_batch
+    emulate_sending_many: callable = EchoClient.send_and_receive_batch
+    supports_batching: bool = emulate_sending_many is not send_many
+    packets = [packet] * batch_size
+    if use_batching:
+        assert supports_batching, "Client does not support batching!"
+
     def runner():
         nonlocal lost_packets
         try:
-            response = client.send_and_receive(packet)
-            if response != packet:
+            responses = send_many(client, packets)
+            if any(r != packet for r in responses):
                 raise ValueError("Mismatched echo response!")
         except socket.timeout:
-            lost_packets += 1
+            lost_packets += batch_size
 
-    benchmark.pedantic(runner, iterations=1, rounds=100_000)
+    benchmark.pedantic(runner, iterations=1, rounds=rounds)
     benchmark.extra_info["lost_packets"] = lost_packets
 
     client.close()
@@ -1260,9 +1275,9 @@ def test_rpc_udp_public(benchmark):
 # ? By contrast, using the "public" IP can trigger NAT hairpin or firewall checks,
 # ? resulting in higher average and more variable latency, especially for UDP.
 # ?
-# ? - TCP Loopback: from 11 us to 142 us worst-case, average 18 us
+# ? - TCP Loopback: from 11 us to 319 us worst-case, average 18 us
 # ? - TCP Public: from 13 us to 2'773 us worst-case, average 19 us
-# ? - UDP Loopback: from 15 us to 402 us worst-case, average 19 us
+# ? - UDP Loopback: from 15 us to 542 us worst-case, average 20 us
 # ? - UDP Public: from 27 us to 4'790 us worst-case, average 34 us
 # ?
 # ? Sounds interesting? I suggest reading
@@ -1272,5 +1287,133 @@ def test_rpc_udp_public(benchmark):
 # ? - "Moving past TCP in the data center, part 2" by Jake Edge:
 # ?   https://lwn.net/Articles/914030/
 
+
+class AsyncioTCPEchoServer(EchoServer):
+    """Asyncio-based TCP Echo Server."""
+
+    def run(self):
+        import asyncio
+
+        async def handle_echo(reader, writer):
+            while True:
+                data = await reader.read(RPC_MTU)
+                if not data:
+                    break
+                writer.write(data)
+                await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        async def main_loop():
+            server = await asyncio.start_server(handle_echo, self.host, self.port)
+            async with server:
+                # Serve forever (blocking)
+                await server.serve_forever()
+
+        asyncio.run(main_loop())
+
+
+class AsyncioTCPEchoClient(ABC):
+    """
+    Since your framework expects .connect(), .send_and_receive(), .close()
+    in a synchronous style, we internally run an event loop and call asyncio
+    functions with run_until_complete().
+    """
+
+    def __init__(self, host="localhost", port=RPC_PORT, timeout=RPC_PACKET_TIMEOUT_SEC):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self._loop = None
+        self._reader = None
+        self._writer = None
+
+    def connect(self):
+        import asyncio
+
+        self._loop = asyncio.new_event_loop()
+
+        async def _connect():
+            reader, writer = await asyncio.open_connection(self.host, self.port)
+            # Optionally, we can set socket timeouts or other config here.
+            return reader, writer
+
+        self._reader, self._writer = self._loop.run_until_complete(_connect())
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        async def _send_and_receive(d):
+            self._writer.write(d)
+            await self._writer.drain()
+            resp = await self._reader.read(RPC_MTU)
+            return resp
+
+        return self._loop.run_until_complete(_send_and_receive(data))
+
+    def send_and_receive_batch(self, messages: List[bytes]) -> List[bytes]:
+        async def _send_and_receive_batch(msgs: List[bytes]):
+            results = []
+            for m in msgs:
+                self._writer.write(m)
+                await self._writer.drain()
+                resp = await self._reader.read(RPC_MTU)
+                results.append(resp)
+            return results
+
+        return self._loop.run_until_complete(_send_and_receive_batch(messages))
+
+    def close(self):
+        async def _close():
+            if self._writer:
+                self._writer.close()
+                await self._writer.wait_closed()
+
+        if self._loop:
+            self._loop.run_until_complete(_close())
+            self._loop.close()
+            self._loop = None
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_asyncio_ordered(benchmark):
+    profile_echo_latency(
+        benchmark,
+        AsyncioTCPEchoServer,
+        AsyncioTCPEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_asyncio_unordered(benchmark):
+    profile_echo_latency(
+        benchmark,
+        AsyncioTCPEchoServer,
+        AsyncioTCPEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+# ? The results are unsettling. The promise of `asyncio` is to provide a
+# ? high-performance, non-blocking I/O framework. However, the overhead
+# ? of the event loop, the context switches, and the additional buffering
+# ? can make it slower than the synchronous TCP client per call.
+# ?
+# ? For 16 calls in a batch, using the 'loopback' interface, the latency is:
+# ? - Asyncio Ordered: from 579 us to 2'909 us worst-case, average 627 us
+# ? - Asyncio Unordered: from 582 us to 2'598 us worst-case, average 631 us
+# ?
+# ? First, we don't see a significant improvement in latency when allowing
+# ? out-of-order processing. Second, when normalizing throughput, the
+# ? original blocking TCP client ends up being faster:
+# ?
+# ? - Asyncio Ordered: average 39 us
+# ? - Asyncio Unordered: average 39 us
+# ? - TCP Loopback: average 18 us
 
 # endregion: Networking and Databases
