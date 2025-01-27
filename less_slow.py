@@ -17,6 +17,7 @@ can vary significantly between consecutive Python versions. That's
 true for both small numeric operations, and high-level abstractions,
 like iterators, generators, and async code.
 """
+
 import pytest
 import numpy as np
 
@@ -302,7 +303,6 @@ def prime_factors_generator(number: int) -> Generator[int, None, None]:
 
 
 def pipeline_generators() -> Tuple[int, int]:
-
     values = range(PIPE_START, PIPE_END + 1)
     values = filter(lambda x: not is_power_of_two(x), values)
     values = filter(lambda x: not is_power_of_three(x), values)
@@ -541,6 +541,7 @@ def test_structs_dict(benchmark):
     result = benchmark(kernel)
     assert result == 3.0
 
+
 @pytest.mark.benchmark(group="composite-structs")
 def test_structs_dict_fun(benchmark):
     def kernel():
@@ -549,6 +550,39 @@ def test_structs_dict_fun(benchmark):
 
     result = benchmark(kernel)
     assert result == 3.0
+
+
+# ? Python's dynamic nature allows users to override builtin functions, this means that
+# ? calls to `dict` (or `list`, `tuple`, etc) require a lookup before execution.
+# ? However, that does not apply to `{}` (or `[]`, etc) since it is a language construct
+# ? which users are unable to override, as such, the Python interpreter is free to
+# ? *simply* create the dictionary instead of performing a lookup before.
+# ? This is even clearer if you compare the bytecode for `{"a": 1}` vs `dict(a=1)`:
+# ?
+# ? Bytecode for `{"a": 1}`:
+# ? ```
+# ? LOAD_CONST               1 ('a')
+# ? LOAD_CONST               2 (1)
+# ? BUILD_MAP                1
+# ? RETURN_VALUE
+# ? ```
+# ?
+# ? Bytecode for `dict(a=1)`
+# ? ```
+# ? LOAD_GLOBAL              1 (dict + NULL)
+# ? LOAD_CONST               1 (1)
+# ? LOAD_CONST               2 (('a',))
+# ? CALL_KW                  1
+# ? RETURN_VALUE
+# ? ```
+# ?
+# ? This results in a measureable difference between the two, running the
+# ? `test_structs_dict` and `test_structs_dict_fun` benchmarks on a Apple M2
+# ? gives us the following results:
+# ?
+# ?  - test_structs_dict (mean): 106 ms
+# ?  - test_structs_dict_fun (mean): 130 ms
+
 
 class PointClass:
     def __init__(self, x: float, y: float, flag: bool) -> None:
