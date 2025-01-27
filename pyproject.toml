@@ -1,6 +1,6 @@
 [project]
 name = "less_slow"
-version = "0.1.1"
+version = "0.2.0"
 description = "Microbenchmarks for a performance-first mindset in Python"
 authors = [
     { name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com" },
