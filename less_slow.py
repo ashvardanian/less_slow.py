@@ -541,6 +541,14 @@ def test_structs_dict(benchmark):
     result = benchmark(kernel)
     assert result == 3.0
 
+@pytest.mark.benchmark(group="composite-structs")
+def test_structs_dict_fun(benchmark):
+    def kernel():
+        point = dict(x=1.0, y=2.0, flag=True)
+        return point["x"] + point["y"]
+
+    result = benchmark(kernel)
+    assert result == 3.0
 
 class PointClass:
     def __init__(self, x: float, y: float, flag: bool) -> None:
