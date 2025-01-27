@@ -1,5 +1,6 @@
 {
   "cSpell.words": [
+    "ASGI",
     "ashvardanian",
     "asynchrony",
     "bootcamps",
@@ -7,9 +8,12 @@
     "coro",
     "CUDA",
     "dataclass",
+    "Datagram",
     "excerise",
     "exponentials",
     "grandkids",
+    "Grigorik",
+    "Ilya",
     "JeanHeyd",
     "Lemire",
     "Maclaurin",
@@ -29,6 +33,7 @@
     "reorderable",
     "SLEEF",
     "StringZilla",
+    "subinterpreter",
     "Trettner",
     "unsalvageable",
     "unscalable",

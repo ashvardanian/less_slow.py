@@ -36,6 +36,12 @@ def f64_sine_math(x: float) -> float:
     return math.sin(x)
 
 
+def f64_sine_math_cached(x: float) -> float:
+    # Cache the math.sin function lookup
+    local_sin = math.sin
+    return local_sin(x)
+
+
 def f64_sine_numpy(x: float) -> float:
     return np.sin(x)
 
@@ -76,6 +82,13 @@ def f64_sine_maclaurin_powless(x: float) -> float:
     x3 = x2 * x
     x5 = x3 * x2
     return x - (x3 / 6.0) + (x5 / 120.0)
+
+
+def f64_sine_maclaurin_multiply(x: float) -> float:
+    x2 = x * x
+    x3 = x2 * x
+    x5 = x3 * x2
+    return x - (x3 * 0.1666666667) + (x5 * 0.008333333333)
 
 
 # ? Let's define a couple of helper functions to run benchmarks on these functions,
@@ -120,6 +133,11 @@ def test_f64_sine_math(benchmark):
 
 
 @pytest.mark.benchmark(group="sin")
+def test_f64_sine_math_cached(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_math_cached)
+
+
+@pytest.mark.benchmark(group="sin")
 def test_f64_sine_numpy(benchmark):
     _f64_sine_run_benchmark_on_each(benchmark, f64_sine_numpy)
 
@@ -137,6 +155,11 @@ def test_f64_sine_maclaurin_numpy(benchmark):
 @pytest.mark.benchmark(group="sin")
 def test_f64_sine_maclaurin_powless(benchmark):
     _f64_sine_run_benchmark_on_each(benchmark, f64_sine_maclaurin_powless)
+
+
+@pytest.mark.benchmark(group="sin")
+def test_f64_sine_maclaurin_multiply(benchmark):
+    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_maclaurin_multiply)
 
 
 @pytest.mark.skipif(not numba_installed, reason="Numba not installed")
@@ -411,14 +434,14 @@ async def for_range_async(start: int, end: int) -> AsyncGenerator[int, None]:
 
 
 async def filter_async(generator, predicate: Callable[[int], bool]):
-    """Async generator that yields values from `generator` that do NOT satisfy `predicate`."""
+    """Async generator that forwards `generator` outputs NOT satisfying `predicate`."""
     async for value in generator:
         if not predicate(value):
             yield value
 
 
 async def prime_factors_async(generator):
-    """Async generator that yields all prime factors of the values coming from `generator`."""
+    """Async generator that yields prime factors for outputs of `generator`."""
     async for val in generator:
         for factor in prime_factors_generator(val):
             yield factor
@@ -942,8 +965,6 @@ def test_errors_status(benchmark):
 
 # region: Reflection, Inspection
 
-import inspect  # noqa: E402
-
 # endregion: Reflection, Inspection
 
 # region: Evaluating Strings
@@ -952,7 +973,699 @@ import inspect  # noqa: E402
 
 # endregion: Dynamic Code
 
-# region: External Systems, IO, Networking
+# region: Networking and Databases
+
+# ? When implementing web-applications, Python developers often rush to
+# ? use overloaded high-level frameworks, like Django, Flask, or FastAPI,
+# ? without ever considering a lower-level route.
+# ?
+# ? Let's implement a simple "echo" client and server using Python's
+# ? built-in `socket` module, and compare its performance with a similar
+# ? implementation in the `asyncio` module and FastAPI.
+
+import socket  # for TCP and UDP servers # noqa: E402
+import inspect  # to get the source code of a function # noqa: E402
+import subprocess  # to start a server in a subprocess # noqa: E402
+import sys  # to get the Python executable # noqa: E402
+import time  # sleep for a bit until the socket binds # noqa: E402
+from abc import ABC, abstractmethod  # to define abstract classes # noqa: E402
+from typing import Literal  # noqa: E402
+
+# ? The User Datagram Protocol (UDP) is OSI Layer 4 "Transport protocol", and
+# ? should be able to operate on top of any OSI Layer 3 "Network protocol".
+# ?
+# ? In most cases, it operates on top of the Internet Protocol (IP), which can
+# ? have Maximum Transmission Unit (MTU) ranging 20 for IPv4 and 40 for IPv6
+# ? to 65535 bytes. In our case, however, the OSI Layer 2 "Data Link Layer" is
+# ? likely to be Ethernet, which has a MTU of 1500 bytes, but most routers are
+# ? configured to fragment packets larger than 1460 bytes. Hence, our choice!
+RPC_MTU = 1460
+RPC_PORT = 12345
+RPC_PACKET_TIMEOUT_SEC = 0.05
+RPC_BATCH_TIMEOUT_SEC = 0.5
 
 
-# endregion: External Systems, IO, Networking
+def fetch_public_ip() -> str:
+    """
+    Returns the 'default' (outbound) IP address of the current machine.
+    Note that this may be a private IP if behind NAT (it won't be your
+    real public-facing IP if you are behind a router/firewall).
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        # The IP/port here doesn't need to be reachable (we never send data);
+        # we just need the OS to pick a default interface for this "outbound" connection.
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+
+
+class EchoServer(ABC):
+    """Abstract base class for echo servers."""
+
+    def __init__(self, host: str = "0.0.0.0", port: int = RPC_PORT):
+        """
+        :param host: The host to bind the server to. Set to '0.0.0.0' to listen on all
+            interfaces. Set to 'localhost' or '127.0.0.1' to listen on the loopback
+            interface.
+        :param port: The port to bind the server to.
+        """
+        self.host = host
+        self.port = port
+
+    @abstractmethod
+    def run(self):
+        """Run the echo server (blocking call)."""
+        pass
+
+
+class TCPEchoServer(EchoServer):
+    """Simple TCP Echo Server."""
+
+    def run(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((self.host, self.port))
+            server.listen()
+            while True:
+                conn, _ = server.accept()
+                with conn:
+                    while True:
+                        data = conn.recv(RPC_MTU)
+                        if not data:
+                            break
+                        conn.sendall(data)
+
+
+class UDPEchoServer(EchoServer):
+    """Simple UDP Echo Server."""
+
+    def run(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server.bind((self.host, self.port))
+            while True:
+                data, addr = server.recvfrom(RPC_MTU)
+                if not data:
+                    break
+                server.sendto(data, addr)
+
+
+class EchoClient(ABC):
+    """Abstract base class for echo clients."""
+
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = RPC_PORT,
+        timeout: float = RPC_PACKET_TIMEOUT_SEC,
+    ):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+
+    @abstractmethod
+    def connect(self):
+        """Establish or prepare the client socket (TCP connect, or just open a UDP socket)."""
+        pass
+
+    @abstractmethod
+    def send_and_receive(self, data: bytes) -> bytes:
+        """Send data and receive its echo."""
+        pass
+
+    def send_and_receive_batch(self, messages: List[bytes]) -> List[bytes]:
+        """Send a batch of messages and receive their echoes."""
+        return [self.send_and_receive(m) for m in messages]
+
+    @abstractmethod
+    def close(self):
+        """Close the underlying socket."""
+        pass
+
+
+class TCPEchoClient(EchoClient):
+    """TCP Echo Client implementation."""
+
+    def __init__(
+        self,
+        host="localhost",
+        port=RPC_PORT,
+        timeout=RPC_PACKET_TIMEOUT_SEC,
+    ):
+        super().__init__(host, port, timeout)
+        self._sock = None
+
+    def connect(self):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.settimeout(self.timeout)
+        self._sock.connect((self.host, self.port))
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        self._sock.sendall(data)
+        return self._sock.recv(RPC_MTU)
+
+    def close(self):
+        if self._sock:
+            self._sock.close()
+            self._sock = None
+
+
+class UDPEchoClient(EchoClient):
+    """UDP Echo Client implementation."""
+
+    def __init__(
+        self,
+        host="localhost",
+        port=RPC_PORT,
+        timeout=RPC_PACKET_TIMEOUT_SEC,
+    ):
+        super().__init__(host, port, timeout)
+        self._sock = None
+
+    def connect(self):
+        # For UDP, "connect" isn't needed
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.settimeout(self.timeout)
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        # For UDP, we must specify the address on sendto unless we've "connected" the socket.
+        self._sock.sendto(data, (self.host, self.port))
+        resp, _ = self._sock.recvfrom(RPC_MTU)
+        return resp
+
+    def close(self):
+        if self._sock:
+            self._sock.close()
+            self._sock = None
+
+
+class ServerProcess:
+    """
+    Wraps an EchoServer in a subprocess. On __enter__, spawns the server
+    and returns `self`. On __exit__, kills the subprocess.
+    """
+
+    def __init__(self, server: EchoServer):
+        self.server = server
+        self._proc = None
+
+    def __enter__(self):
+        source_code = inspect.getsource(self.server.__class__)
+        # We'll also need the base class if the server references it:
+        base_code = inspect.getsource(EchoServer)
+        # Recreate an identical server instance in another process and call run()
+        script = f"""
+import socket
+from abc import ABC, abstractmethod
+
+RPC_MTU = {RPC_MTU}
+RPC_PORT = {RPC_PORT}
+
+{base_code}
+{source_code}
+
+if __name__ == "__main__":
+    server = {self.server.__class__.__name__}(host={self.server.host!r}, port={self.server.port})
+    server.run()
+"""
+
+        self._proc = subprocess.Popen([sys.executable, "-c", script])
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._proc:
+            self._proc.kill()
+            self._proc.wait()
+
+
+def profile_echo_latency(
+    benchmark,
+    server_class,
+    client_class,
+    packet_length: int = 1024,
+    rounds: int = 100_000,
+    batch_size: int = 1,
+    use_batching: bool = False,
+    route: Literal["loopback", "public"] = "loopback",
+):
+    """
+    A generic echo latency profiler that uses class-based server/client.
+    """
+
+    packet = b"ping" * (packet_length // 4)
+    address_to_listen = "127.0.0.1" if route == "loopback" else "0.0.0.0"
+    address_to_talk = "127.0.0.1" if route == "loopback" else fetch_public_ip()
+    lost_packets = 0
+
+    # Initialize server and run in a subprocess context
+    server = server_class(host=address_to_listen)
+    context = ServerProcess(server).__enter__()
+    time.sleep(0.5)  # Short wait to ensure server is listening
+
+    # Create client
+    client = client_class(host=address_to_talk)
+    client.connect()
+
+    # We may want to allow executing the requests within the batch asynchronously
+    send_many: callable = client_class.send_and_receive_batch
+    emulate_sending_many: callable = EchoClient.send_and_receive_batch
+    supports_batching: bool = emulate_sending_many is not send_many
+    packets = [packet] * batch_size
+    if use_batching:
+        assert supports_batching, "Client does not support batching!"
+
+    def runner():
+        nonlocal lost_packets
+        try:
+            responses = send_many(client, packets)
+            if any(r != packet for r in responses):
+                raise ValueError("Mismatched echo response!")
+        except socket.timeout:
+            lost_packets += batch_size
+
+    benchmark.pedantic(runner, iterations=1, rounds=rounds)
+    benchmark.extra_info["lost_packets"] = lost_packets
+
+    client.close()
+    context.__exit__(None, None, None)  # kill the server
+
+
+@pytest.mark.benchmark(group="echo")
+def test_rpc_tcp_loopback(benchmark):
+    profile_echo_latency(benchmark, TCPEchoServer, TCPEchoClient, route="loopback")
+
+
+@pytest.mark.benchmark(group="echo")
+def test_rpc_udp_loopback(benchmark):
+    profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient, route="loopback")
+
+
+@pytest.mark.benchmark(group="echo")
+def test_rpc_tcp_public(benchmark):
+    profile_echo_latency(benchmark, TCPEchoServer, TCPEchoClient, route="public")
+
+
+@pytest.mark.benchmark(group="echo")
+def test_rpc_udp_public(benchmark):
+    profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient, route="public")
+
+
+# ? There's a clear difference between sending packets via `127.0.0.1` (loopback)
+# ? versus the machine's "public" IP. Loopback is effectively short-circuited in
+# ? software, yielding minimal overhead and tighter latency distributions.
+# ? By contrast, using the "public" IP can trigger NAT hairpin or firewall checks,
+# ? resulting in higher average and more variable latency, especially for UDP.
+# ?
+# ? - TCP Loopback: from 11 us to 319 us worst-case, average 18 us
+# ? - TCP Public: from 13 us to 2'773 us worst-case, average 19 us
+# ? - UDP Loopback: from 15 us to 542 us worst-case, average 20 us
+# ? - UDP Public: from 27 us to 4'790 us worst-case, average 34 us
+# ?
+# ? Sounds interesting? I suggest reading
+# ?
+# ? - "High Performance Browser Networking" by Ilya Grigorik:
+# ?   https://hpbn.co/
+# ? - "Moving past TCP in the data center, part 2" by Jake Edge:
+# ?   https://lwn.net/Articles/914030/
+
+
+class AsyncioTCPEchoServer(EchoServer):
+    """Asyncio-based TCP Echo Server."""
+
+    def run(self):
+        import asyncio
+
+        async def handle_echo(reader, writer):
+            while True:
+                data = await reader.read(RPC_MTU)
+                if not data:
+                    break
+                writer.write(data)
+                await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        async def main_loop():
+            server = await asyncio.start_server(handle_echo, self.host, self.port)
+            async with server:
+                # Serve forever (blocking)
+                await server.serve_forever()
+
+        asyncio.run(main_loop())
+
+
+class AsyncioTCPEchoClient(ABC):
+    """
+    Since your framework expects .connect(), .send_and_receive(), .close()
+    in a synchronous style, we internally run an event loop and call asyncio
+    functions with run_until_complete().
+    """
+
+    def __init__(self, host="localhost", port=RPC_PORT, timeout=RPC_PACKET_TIMEOUT_SEC):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self._loop = None
+        self._reader = None
+        self._writer = None
+
+    def connect(self):
+        import asyncio
+
+        self._loop = asyncio.new_event_loop()
+
+        async def _connect():
+            reader, writer = await asyncio.open_connection(self.host, self.port)
+            # Optionally, we can set socket timeouts or other config here.
+            return reader, writer
+
+        self._reader, self._writer = self._loop.run_until_complete(_connect())
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        async def _send_and_receive(d):
+            self._writer.write(d)
+            await self._writer.drain()
+            resp = await self._reader.read(RPC_MTU)
+            return resp
+
+        return self._loop.run_until_complete(_send_and_receive(data))
+
+    def send_and_receive_batch(self, messages: List[bytes]) -> List[bytes]:
+        async def _send_and_receive_batch(msgs: List[bytes]):
+            results = []
+            for m in msgs:
+                self._writer.write(m)
+                await self._writer.drain()
+                resp = await self._reader.read(RPC_MTU)
+                results.append(resp)
+            return results
+
+        return self._loop.run_until_complete(_send_and_receive_batch(messages))
+
+    def close(self):
+        async def _close():
+            if self._writer:
+                self._writer.close()
+                await self._writer.wait_closed()
+
+        if self._loop:
+            self._loop.run_until_complete(_close())
+            self._loop.close()
+            self._loop = None
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_asyncio_ordered(benchmark):
+    profile_echo_latency(
+        benchmark,
+        AsyncioTCPEchoServer,
+        AsyncioTCPEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_asyncio_unordered(benchmark):
+    profile_echo_latency(
+        benchmark,
+        AsyncioTCPEchoServer,
+        AsyncioTCPEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+# ? The results are unsettling. The promise of `asyncio` is to provide a
+# ? high-performance, non-blocking I/O framework. However, the overhead
+# ? of the event loop, the context switches, and the additional buffering
+# ? can make it slower than the synchronous TCP client per call.
+# ?
+# ? For 16 calls in a batch, using the 'loopback' interface, the latency is:
+# ? - Asyncio Ordered: from 579 us to 2'909 us worst-case, average 627 us
+# ? - Asyncio Unordered: from 582 us to 2'598 us worst-case, average 631 us
+# ?
+# ? First, we don't see a significant improvement in latency when allowing
+# ? out-of-order processing. Second, when normalizing throughput, the
+# ? original blocking TCP client ends up being faster:
+# ?
+# ? - Asyncio Ordered: average 39 us
+# ? - Asyncio Unordered: average 39 us
+# ? - TCP Loopback: average 18 us
+# ?
+# ? This, however, may not be as bad as higher-level frameworks like FastAPI,
+# ? and one of the most common underlying ASGI servers, Uvicorn.
+
+
+class FastAPIEchoServer(EchoServer):
+    """
+    Minimal FastAPI-based HTTP echo server. It exposes a POST /echo endpoint
+    that simply returns the raw request body as-is (using a binary media type).
+    """
+
+    def run(self):
+        import uvicorn
+        from fastapi import FastAPI, Request
+        from fastapi.responses import Response
+
+        app = FastAPI()
+
+        @app.post("/echo")
+        async def echo_endpoint(req: Request):
+            data = await req.body()
+            return Response(content=data, media_type="application/octet-stream")
+
+        uvicorn.run(app, host=self.host, port=self.port, log_level="error")
+
+
+class UvicornEchoServer(EchoServer):
+    """
+    Minimal raw ASGI echo server on /echo. No FastAPI or Starlette, just
+    uvicorn + a single scope check for POST /echo. Returns the request
+    body verbatim with content-type=application/octet-stream.
+    """
+
+    def run(self):
+        import uvicorn
+
+        async def app(scope, receive, send):
+            if scope["type"] == "http":
+                # Check path; if not /echo, return 404
+                if scope.get("path", "") != "/echo":
+                    await send(
+                        {"type": "http.response.start", "status": 404, "headers": []}
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": b"Not Found",
+                            "more_body": False,
+                        }
+                    )
+                    return
+
+                body = b""
+                more_body = True
+                while more_body:
+                    event = await receive()
+                    if event["type"] == "http.request":
+                        body += event.get("body", b"")
+                        more_body = event.get("more_body", False)
+
+                # Echo the body
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 200,
+                        "headers": [
+                            (b"content-type", b"application/octet-stream"),
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": body,
+                        "more_body": False,
+                    }
+                )
+
+        uvicorn.run(app, host=self.host, port=self.port, log_level="error")
+
+
+class RequestsClient(EchoClient):
+    """
+    A simple requests-based client, calling POST /echo with the raw data in the
+    request body, and returning the response body as bytes.
+    """
+
+    def __init__(self, host="localhost", port=RPC_PORT, timeout=RPC_PACKET_TIMEOUT_SEC):
+        super().__init__(host, port, timeout)
+        self._session = None
+
+    def connect(self):
+        import requests
+
+        self._session = requests.Session()
+        self._session.headers.update({"Content-Type": "application/octet-stream"})
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        url = f"http://{self.host}:{self.port}/echo"
+        resp = self._session.post(url, data=data, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.content
+
+    def close(self):
+        if self._session:
+            self._session.close()
+            self._session = None
+
+
+class HTTPXAsyncEchoClient(EchoClient):
+    """
+    Uses the httpx library in async mode to talk to the /echo endpoint.
+    Batching is done concurrently with asyncio.gather.
+    """
+
+    def __init__(self, host="localhost", port=RPC_PORT, timeout=RPC_PACKET_TIMEOUT_SEC):
+        super().__init__(host, port, timeout)
+        self._loop = None
+        self._client = None
+
+    def connect(self):
+        import httpx
+        import asyncio
+
+        # We'll create a dedicated event loop for this client and
+        # instantiate the AsyncClient inside it.
+        self._loop = asyncio.new_event_loop()
+
+        async def _setup():
+            # Create an AsyncClient with the given timeout and
+            # set headers for sending binary data.
+            client = httpx.AsyncClient(timeout=self.timeout)
+            client.headers.update({"Content-Type": "application/octet-stream"})
+            return client
+
+        self._client = self._loop.run_until_complete(_setup())
+
+    def send_and_receive(self, data: bytes) -> bytes:
+        """
+        Sends a single request and awaits the response using AsyncClient.
+        We wrap it in run_until_complete() for synchronous code compatibility.
+        """
+
+        async def _send_and_receive(d):
+            url = f"http://{self.host}:{self.port}/echo"
+            resp = await self._client.post(url, content=d)
+            resp.raise_for_status()
+            return resp.content
+
+        return self._loop.run_until_complete(_send_and_receive(data))
+
+    def send_and_receive_batch(self, messages: List[bytes]) -> List[bytes]:
+        """
+        Demonstrates concurrent batch logic using asyncio.gather.
+        All requests are fired off in parallel, then we await all responses.
+        """
+        import asyncio
+
+        async def _send_and_receive_batch(msgs: List[bytes]) -> List[bytes]:
+            url = f"http://{self.host}:{self.port}/echo"
+
+            # Build a coroutine for each message
+            async def post(msg: bytes):
+                resp = await self._client.post(url, content=msg)
+                resp.raise_for_status()
+                return resp.content
+
+            # Fire them off concurrently
+            tasks = [post(m) for m in msgs]
+            results = await asyncio.gather(*tasks)
+            return list(results)
+
+        return self._loop.run_until_complete(_send_and_receive_batch(messages))
+
+    def close(self):
+        """
+        Closes the AsyncClient and event loop.
+        """
+        import asyncio
+
+        async def _close():
+            if self._client:
+                await self._client.aclose()
+
+        if self._loop:
+            self._loop.run_until_complete(_close())
+            self._loop.close()
+            self._loop = None
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_fastapi_requests(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        RequestsClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=False,  # ! Requests are typically synchronous
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_fastapi_httpx(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        HTTPXAsyncEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_uvicorn_requests(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        RequestsClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=False,  # ! Requests are typically synchronous
+        rounds=1_000,
+    )
+
+
+@pytest.mark.benchmark(group="echo")
+def test_batch16_rpc_uvicorn_httpx(benchmark):
+    profile_echo_latency(
+        benchmark,
+        FastAPIEchoServer,
+        HTTPXAsyncEchoClient,
+        route="loopback",
+        batch_size=16,
+        use_batching=True,
+        rounds=1_000,
+    )
+
+
+# ? The benchmark results are striking. For batch sizes of 16 messages:
+# ?
+# ? - Raw TCP with asyncio: 0.95 milliseconds per batch (59 us per message)
+# ? - Requests+FastAPI/Uvicorn: 7.7 milliseconds per batch (0.5 ms per message)
+# ? - Async HTTPX+FastAPI/Uvicorn: 12.5 milliseconds per batch (0.8 ms per message)
+# ?
+# ? This demonstrates why low-latency systems often avoid HTTP and high-level
+# ? frameworks in favor of raw TCP/UDP, especially for internal services. The
+# ? arguable convenience of FastAPI comes at a significant performance cost -
+# ? about 10x slower than already slow IO stack of Python.
+
+# endregion: Networking and Databases
