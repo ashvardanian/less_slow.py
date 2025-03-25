@@ -214,6 +214,213 @@ def test_f64_sines_maclaurin_powless(benchmark):
 
 # endregion: Accuracy vs Efficiency of Standard Libraries
 
+# region: Approximations and Benchmarks
+
+# ? Python benefits greatly from a wide ecosystem of numerics libraries.
+# ? If you know Linear Algebra, there is a wide range of tricks you can
+# ? use to speed up your code.
+# ?
+# ? For example, the Singular Value Decomposition (SVD) is a fundamental
+# ? operation proven by the Eckart-Young-Mirsky theorem to be the best
+# ? low-rank approximation of a matrix w.r.t. the Frobenius norm.
+# ?
+# ? https://en.wikipedia.org/wiki/Singular_value_decomposition
+# ? https://en.wikipedia.org/wiki/Matrix_norm#Frobenius_norm
+
+
+@pytest.mark.benchmark(group="decomposition")
+@pytest.mark.parametrize("n_dim", [1000, 5000])
+@pytest.mark.parametrize("k_percent", ["100%", "20%", "4%"])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_svd(benchmark, n_dim: int, k_percent: str, dtype: np.dtype):
+    k = int(n_dim * int(k_percent[:-1]) / 100)
+    m = 10  # Number of columns in the multiplication circuit
+
+    # ? Just to prove a point, let's make the second dimension slightly
+    # ? larger to show that this works for non-square matrices too.
+    A = np.random.rand(n_dim, n_dim + 1).astype(dtype)
+    X = np.random.rand(n_dim + 1, m).astype(dtype)
+
+    def baseline():
+        return A @ X
+
+    def frobenius_norm(A: np.ndarray) -> float:
+        return np.linalg.norm(A, ord="fro")
+
+    def low_rank_approximation(A, k: int) -> tuple:
+        U, S, VT = np.linalg.svd(A, full_matrices=False)
+        return U[:, :k], S[:k], VT[:k, :]
+
+    # Compute the low-rank approximation of A just once
+    U_k, S_k, VT_k = low_rank_approximation(A, k)
+    S_truncated = np.zeros((k, k))
+    np.fill_diagonal(S_truncated, S_k)
+
+    # Estimate the error of the low-rank approximation
+    mean_recovery_error = frobenius_norm(A - U_k @ S_truncated @ VT_k) / A.size
+    expected_result = baseline()
+    max_circuit_error = 0.0  # ? We will update this later
+
+    # Decomposed multiplication: compute A_approx @ X where A_approx = U_k * diag(S_k) * VT_k.
+    # This is computed in two steps: first compute (VT_k @ X), then scale by S_k, and finally multiply by U_k.
+    def decomposed():
+        temp = VT_k @ X  # (k x m)
+        # Scale each row by the corresponding singular value without explicitly constructing
+        # the diagonal matrix.
+        temp = S_k[:, np.newaxis] * temp
+        return U_k @ temp  # (n_dim x m)
+
+    def bench_svd():
+        product = baseline if k_percent == "100%" else decomposed
+        result = product()
+        mean_error = frobenius_norm(result - expected_result) / result.size
+
+        # Update the `max_circuit_error`
+        nonlocal max_circuit_error
+        max_circuit_error = max(max_circuit_error, mean_error)
+        return mean_error
+
+    # Estimate FLOPs:
+    # Full multiplication: A (n_dim x (n_dim+1)) times X ((n_dim+1) x m)
+    # roughly requires 2 * n_dim * (n_dim+1) * m floating-point operations.
+    full_flops = 2 * n_dim * (n_dim + 1) * m
+
+    # Decomposed multiplication consists of:
+    # 1. VT_k @ X: (k x (n_dim+1)) * ((n_dim+1) x m) → 2 * k * (n_dim+1) * m flops.
+    # 2. Scaling by S_k: k * m flops (one multiplication per element).
+    # 3. U_k @ (result): (n_dim x k) * (k x m) → 2 * n_dim * k * m flops.
+    decomposed_flops = 2 * k * (n_dim + 1) * m + k * m + 2 * n_dim * k * m
+
+    benchmark(bench_svd)
+    benchmark.extra_info["mean_recovery_error"] = mean_recovery_error
+    benchmark.extra_info["flops_reduction"] = full_flops / decomposed_flops
+
+
+# ? SVD is not the only decomposition method. Less theoretically sound but
+# ? often faster is the QR decomposition, which is applicable to any full-rank.
+# ? It produces an orthogonal matrix Q and an upper triangular matrix R such that
+# ? A = Q @ R.
+
+
+@pytest.mark.benchmark(group="decomposition")
+@pytest.mark.parametrize("n_dim", [1000, 5000])
+@pytest.mark.parametrize("k_percent", ["100%", "20%", "4%"])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_qr(benchmark, n_dim: int, k_percent: float, dtype: np.dtype):
+    k = int(n_dim * int(k_percent[:-1]) / 100)
+    m = 10  # Number of columns in the multiplication circuit
+
+    # ? Just to prove a point, let's make the second dimension slightly
+    # ? larger to show that this works for non-square matrices too.
+    A = np.random.rand(n_dim, n_dim + 1).astype(dtype)
+    X = np.random.rand(n_dim + 1, m).astype(dtype)
+
+    def baseline():
+        return A @ X
+
+    def frobenius_norm(mat: np.ndarray) -> float:
+        return np.linalg.norm(mat, ord="fro")
+
+    # Compute the reduced QR decomposition of A.
+    Q, R = np.linalg.qr(A, mode="reduced")
+    Q_k = Q[:, :k]
+    R_k = R[:k, :]
+
+    # Estimate the recovery error of the truncated QR approximation.
+    A_approx = Q_k @ R_k
+    mean_recovery_error = frobenius_norm(A - A_approx) / A.size
+    expected_result = baseline()
+    max_circuit_error = 0.0  # ? We will update this later
+
+    # Decomposed multiplication using the truncated QR factors.
+    def decomposed():
+        return Q_k @ (R_k @ X)
+
+    def bench_qr():
+        product = baseline if k_percent == "100%" else decomposed
+        result = product()
+        mean_error = frobenius_norm(result - expected_result) / result.size
+
+        # Update the `max_circuit_error`
+        nonlocal max_circuit_error
+        max_circuit_error = max(max_circuit_error, mean_error)
+        return mean_error
+
+    # Estimate FLOPs:
+    # Full multiplication: A (n_dim x (n_dim+1)) times X ((n_dim+1) x m)
+    full_flops = 2 * n_dim * (n_dim + 1) * m
+    # Decomposed multiplication:
+    # 1. R_k @ X: 2 * k * (n_dim+1) * m flops.
+    # 2. Q_k @ (result): 2 * n_dim * k * m flops.
+    decomposed_flops = 2 * k * (n_dim + 1) * m + 2 * n_dim * k * m
+
+    benchmark(bench_qr)
+    benchmark.extra_info["mean_recovery_error"] = mean_recovery_error
+    benchmark.extra_info["flops_reduction"] = full_flops / decomposed_flops
+
+
+# ? For narrower classes of matrices we can do even better!
+# ? SciPy also provides LU and Cholesky decompositions, but LU only works for square
+# ? matrices, and Cholesky only works for symmetric positive-definite matrices (SPD).
+# ? SPD means that A = A^T and x^T @ A @ x > 0 for all non-zero vectors x.
+
+
+@pytest.mark.benchmark(group="decomposition")
+@pytest.mark.parametrize("n_dim", [1000, 5000])
+@pytest.mark.parametrize("k_percent", ["100%", "20%", "4%"])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_cholesky(benchmark, n_dim: int, k_percent: float, dtype: np.dtype):
+    k = int(n_dim * int(k_percent[:-1]) / 100)
+    m = 10  # Number of columns in the multiplication circuit
+
+    # ? Generate a random matrix and form a symmetric positive definite matrix.
+    A = np.random.rand(n_dim, n_dim).astype(dtype)
+    A_spd = A @ A.T + np.eye(n_dim).astype(dtype) / 1000
+    X = np.random.rand(n_dim, m).astype(dtype)
+
+    def baseline():
+        return A_spd @ X
+
+    def frobenius_norm(mat: np.ndarray) -> float:
+        return np.linalg.norm(mat, ord="fro")
+
+    #  Compute the Cholesky decomposition of the SPD matrix
+    L = np.linalg.cholesky(A_spd)
+    L_k = L[:, :k]
+    A_approx = L_k @ L_k.T
+
+    mean_recovery_error = frobenius_norm(A_spd - A_approx) / A_spd.size
+    expected_result = baseline()
+    max_circuit_error = 0.0
+
+    def decomposed():
+        return L_k @ (L_k.T @ X)
+
+    def bench():
+        product = baseline if k_percent == "100%" else decomposed
+        result = product()
+        mean_error = frobenius_norm(result - expected_result) / result.size
+
+        # Update the `max_circuit_error`
+        nonlocal max_circuit_error
+        max_circuit_error = max(max_circuit_error, mean_error)
+        return mean_error
+
+    # Estimate FLOPs:
+    # Full multiplication: A_spd (n_dim x n_dim) times X (n_dim x m)
+    full_flops = 2 * n_dim * n_dim * m
+    # Decomposed multiplication:
+    # 1. L_k.T @ X: 2 * k * n_dim * m flops.
+    # 2. L_k @ (result): 2 * n_dim * k * m flops.
+    decomposed_flops = 4 * n_dim * k * m
+
+    benchmark(bench)
+    benchmark.extra_info["mean_recovery_error"] = mean_recovery_error
+    benchmark.extra_info["flops_reduction"] = full_flops / decomposed_flops
+
+
+# endregion: Approximations and Benchmarks
+
 # endregion: Numerics
 
 # region: Pipelines and Abstractions
