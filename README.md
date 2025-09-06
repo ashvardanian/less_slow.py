@@ -36,10 +36,8 @@ pytest less_slow.py -x -k echo                             # Filter and stop on 
 Alternatively, run the benchmarks in a controlled environment using [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```sh
-uv venv --python 3.12                       # Or your preferred Python version
-source .venv/bin/activate                   # To activate the virtual environment
-uv run --python="3.12" \
- --with-requirements requirements.in \
+uv run --python="3.12" --no-sync \
+    --with-requirements requirements.in \
     pytest -ra -q less_slow.py
 ```
 

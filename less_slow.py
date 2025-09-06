@@ -17,9 +17,65 @@ can vary significantly between consecutive Python versions. That's
 true for both small numeric operations, and high-level abstractions,
 like iterators, generators, and async code.
 """
+import sys
+import platform
+import multiprocessing
+import math
 
 import pytest
 import numpy as np
+import pandas as pd
+
+pandas_installed = True
+try:
+    import pyarrow as pa  # noqa: E402
+    import pyarrow.compute as pc  # noqa: E402
+
+    pyarrow_installed = True
+except ImportError:
+    pyarrow_installed = False
+
+
+numba_installed = False
+try:
+    import numba
+
+    numba_installed = True
+except ImportError:
+    pass  # skip if numba is not installed
+
+# region: Session Environment Info
+
+
+@pytest.fixture(scope="session", autouse=True)
+def print_environment_info():
+    system = platform.system()
+    release = platform.release()
+    machine = platform.machine()
+    cores = multiprocessing.cpu_count()
+    py_impl = platform.python_implementation()
+    py_ver = platform.python_version()
+    runtime = sys.executable
+
+    lines = [
+        f"Env: {system} {release} | {machine}",
+        f"Cores: {cores}",
+        f"Python: {py_impl} {py_ver} | {runtime}",
+        f"NumPy: {np.__version__}",
+    ]
+
+    if pandas_installed:
+        lines.append(f"Pandas: {pd.__version__}")
+    if pyarrow_installed:
+        lines.append(f"PyArrow: {pa.__version__}")
+    if numba_installed:
+        lines.append(f"Numba: {numba.__version__}")
+
+    print("\n".join(lines))
+
+
+# endregion: Session Environment Info
+
 
 # region: Numerics
 
@@ -29,8 +85,6 @@ import numpy as np
 # ? research and graduate studies, yet its foundational concepts are more
 # ? accessible than they seem. Let's start with one of the most basic
 # ? operations — computing the __sine__ of a number.
-
-import math
 
 
 def f64_sine_math(x: float) -> float:
@@ -947,6 +1001,81 @@ def test_structs_attrs(benchmark):
 # ? Python is a dynamically typed language, and it allows mixing different
 # ? types in a single collection. However, the performance of such collections
 # ? can vary significantly, depending on the types and their distribution.
+
+
+from decimal import Decimal  # noqa: E402
+from fractions import Fraction  # noqa: E402
+
+
+def _represent_with_different_types(value_int: int = 3):
+    """Represent the same numeric value via different types (no invalid entries)."""
+    return [
+        value_int,  # int
+        float(value_int),  # float
+        np.int64(value_int),  # numpy integer
+        np.float64(value_int),  # numpy float
+        Decimal(value_int),  # decimal
+        Fraction(value_int, 1),  # fraction
+        f"{value_int}",  # numeric string
+        f"{value_int}.0",  # numeric string with decimal point
+    ]
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_heterogeneous_sum(benchmark):
+    """Coerce all representations with float(); all succeed (no exceptions)."""
+    seed = _represent_with_different_types()
+    values = seed * 10_000
+
+    def kernel():
+        return sum(float(v) for v in values)
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-9
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_type_matching_sum(benchmark):
+    """Coerce all representations with float(); all succeed (no exceptions)."""
+    seed = _represent_with_different_types()
+    values = seed * 10_000
+
+    def kernel():
+        sum_value = 0.0
+        for v in values:
+            if isinstance(v, (int, float, np.integer, np.floating)):
+                sum_value += v
+            else:
+                sum_value += float(v)
+        return sum_value
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-9
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_homogeneous_sum(benchmark):
+    """Baseline: homogeneous float list with the same value."""
+    values = [3.0] * (8 * 10_000)  # same total length as the hetero lists
+
+    def kernel():
+        return sum(values)
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-12
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_homogeneous_container_sum(benchmark):
+    """Baseline: homogeneous float list with the same value."""
+    values = [3.0] * (8 * 10_000)  # same total length as the hetero lists
+    values = np.array(values, dtype=np.float64)
+
+    def kernel():
+        return np.sum(values)
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-12
 
 
 # endregion: Heterogenous Collections

@@ -7,6 +7,14 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.8"
+license = { file = "LICENSE" }
+
+[project.urls]
+Homepage = "https://github.com/ashvardanian/less_slow.py"
+Repository = "https://github.com/ashvardanian/less_slow.py"
+Issues = "https://github.com/ashvardanian/less_slow.py/issues"
+"For C++" = "https://github.com/ashvardanian/less_slow.cpp"
+"For Rust" = "https://github.com/ashvardanian/less_slow.rs"
 
 [tool.pytest.ini_options]
 minversion = "6.0"
