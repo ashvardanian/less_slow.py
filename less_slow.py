@@ -17,8 +17,65 @@ can vary significantly between consecutive Python versions. That's
 true for both small numeric operations, and high-level abstractions,
 like iterators, generators, and async code.
 """
+import sys
+import platform
+import multiprocessing
+import math
+
 import pytest
 import numpy as np
+import pandas as pd
+
+pandas_installed = True
+try:
+    import pyarrow as pa  # noqa: E402
+    import pyarrow.compute as pc  # noqa: E402
+
+    pyarrow_installed = True
+except ImportError:
+    pyarrow_installed = False
+
+
+numba_installed = False
+try:
+    import numba
+
+    numba_installed = True
+except ImportError:
+    pass  # skip if numba is not installed
+
+# region: Session Environment Info
+
+
+@pytest.fixture(scope="session", autouse=True)
+def print_environment_info():
+    system = platform.system()
+    release = platform.release()
+    machine = platform.machine()
+    cores = multiprocessing.cpu_count()
+    py_impl = platform.python_implementation()
+    py_ver = platform.python_version()
+    runtime = sys.executable
+
+    lines = [
+        f"Env: {system} {release} | {machine}",
+        f"Cores: {cores}",
+        f"Python: {py_impl} {py_ver} | {runtime}",
+        f"NumPy: {np.__version__}",
+    ]
+
+    if pandas_installed:
+        lines.append(f"Pandas: {pd.__version__}")
+    if pyarrow_installed:
+        lines.append(f"PyArrow: {pa.__version__}")
+    if numba_installed:
+        lines.append(f"Numba: {numba.__version__}")
+
+    print("\n".join(lines))
+
+
+# endregion: Session Environment Info
+
 
 # region: Numerics
 
@@ -28,8 +85,6 @@ import numpy as np
 # ? research and graduate studies, yet its foundational concepts are more
 # ? accessible than they seem. Let's start with one of the most basic
 # ? operations — computing the __sine__ of a number.
-
-import math
 
 
 def f64_sine_math(x: float) -> float:

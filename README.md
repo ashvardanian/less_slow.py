@@ -37,7 +37,7 @@ Alternatively, run the benchmarks in a controlled environment using [`uv`](https
 
 ```sh
 uv run --python="3.12" --no-sync \
- --with-requirements requirements.in \
+    --with-requirements requirements.in \
     pytest -ra -q less_slow.py
 ```
 
