@@ -700,6 +700,81 @@ def test_structs_attrs(benchmark):
 # ? can vary significantly, depending on the types and their distribution.
 
 
+from decimal import Decimal  # noqa: E402
+from fractions import Fraction  # noqa: E402
+
+
+def _represent_with_different_types(value_int: int = 3):
+    """Represent the same numeric value via different types (no invalid entries)."""
+    return [
+        value_int,  # int
+        float(value_int),  # float
+        np.int64(value_int),  # numpy integer
+        np.float64(value_int),  # numpy float
+        Decimal(value_int),  # decimal
+        Fraction(value_int, 1),  # fraction
+        f"{value_int}",  # numeric string
+        f"{value_int}.0",  # numeric string with decimal point
+    ]
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_heterogeneous_sum(benchmark):
+    """Coerce all representations with float(); all succeed (no exceptions)."""
+    seed = _represent_with_different_types()
+    values = seed * 10_000
+
+    def kernel():
+        return sum(float(v) for v in values)
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-9
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_type_matching_sum(benchmark):
+    """Coerce all representations with float(); all succeed (no exceptions)."""
+    seed = _represent_with_different_types()
+    values = seed * 10_000
+
+    def kernel():
+        sum_value = 0.0
+        for v in values:
+            if isinstance(v, (int, float, np.integer, np.floating)):
+                sum_value += v
+            else:
+                sum_value += float(v)
+        return sum_value
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-9
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_homogeneous_sum(benchmark):
+    """Baseline: homogeneous float list with the same value."""
+    values = [3.0] * (8 * 10_000)  # same total length as the hetero lists
+
+    def kernel():
+        return sum(values)
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-12
+
+
+@pytest.mark.benchmark(group="heterogenous-containers")
+def test_homogeneous_container_sum(benchmark):
+    """Baseline: homogeneous float list with the same value."""
+    values = [3.0] * (8 * 10_000)  # same total length as the hetero lists
+    values = np.array(values, dtype=np.float64)
+
+    def kernel():
+        return np.sum(values)
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-12
+
+
 # endregion: Heterogenous Collections
 
 # region: Tables and Arrays
