@@ -67,7 +67,7 @@ pytest==8.3.4
     # via
     #   -r requirements.in
     #   pytest-benchmark
-pytest-benchmark @ git+https://github.com/ionelmc/pytest-benchmark.git@4059247e11fdc378ecc436c8cec151bca20c0a90
+pytest-benchmark @ git+https://github.com/ionelmc/pytest-benchmark.git@b857483dd8e8a875f3aa040bd0054847ad657291
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via pandas
