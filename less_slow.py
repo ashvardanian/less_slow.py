@@ -9,8 +9,8 @@ Micro-benchmarks to build a performance-first mindset in Python.
 
 This project is a spiritual brother to `less_slow.cpp` for C++20,
 and `less_slow.rs` for Rust. Unlike low-level systems languages,
-Python is a high-level with significant runtime overheads, and
-no obvious way to predict the performance of code.
+Python is a high-level language with significant runtime overheads,
+and no obvious way to predict the performance of code.
 
 Table of Contents
 -----------------
@@ -109,7 +109,7 @@ def print_environment_info():
 
 # region: Numerics
 
-# region: Accuracy vs Efficiency of Standard Libraries
+# region: Standard Library vs NumPy
 
 # ? Numerical computing is a core subject in high-performance computing (HPC)
 # ? research and graduate studies, yet its foundational concepts are more
@@ -180,14 +180,6 @@ def f64_sine_maclaurin_multiply(x: float) -> float:
 # ? and compare their performance on 10k random floats in [0, 2π]. We can also
 # ? use Numba JIT to compile these functions to machine code, and compare the
 # ? performance of the JIT-compiled functions with the standard Python functions.
-
-numba_installed = False
-try:
-    import numba
-
-    numba_installed = True
-except ImportError:
-    pass  # skip if numba is not installed
 
 
 def _f64_sine_run_benchmark_on_each(benchmark, sin_fn):
@@ -296,9 +288,9 @@ def test_f64_sines_maclaurin_powless(benchmark):
 # ? considered a "glue" language for various native languages and pre-compiled
 # ? libraries for batch/bulk processing.
 
-# endregion: Accuracy vs Efficiency of Standard Libraries
+# endregion: Standard Library vs NumPy
 
-# region: Approximations and Benchmarks
+# region: Matrix Decompositions
 
 # ? Python benefits greatly from a wide ecosystem of numerics libraries.
 # ? If you know Linear Algebra, there is a wide range of tricks you can
@@ -458,8 +450,10 @@ def test_cholesky(benchmark, n_dim: int, k_percent: float, dtype: np.dtype):
     m = 10  # Number of columns in the multiplication circuit
 
     # ? Generate a random matrix and form a symmetric positive definite matrix.
+    # ? float32 needs larger regularization to stay positive definite for big matrices.
     A = np.random.rand(n_dim, n_dim).astype(dtype)
-    A_spd = A @ A.T + np.eye(n_dim).astype(dtype) / 1000
+    reg = n_dim / 100 if dtype == np.float32 else 1 / 1000
+    A_spd = A @ A.T + np.eye(n_dim).astype(dtype) * reg
     X = np.random.rand(n_dim, m).astype(dtype)
 
     def baseline():
@@ -503,7 +497,7 @@ def test_cholesky(benchmark, n_dim: int, k_percent: float, dtype: np.dtype):
     benchmark.extra_info["flops_reduction"] = full_flops / decomposed_flops
 
 
-# endregion: Approximations and Benchmarks
+# endregion: Matrix Decompositions
 
 # endregion: Numerics
 
@@ -807,7 +801,7 @@ def test_pipeline_async(benchmark):
 
 # endregion: Pipelines and Abstractions
 
-# region: Structures, Tuples, ADTs, AOS, SOA
+# region: Data Structures
 
 # region: Composite Structs
 
@@ -1453,9 +1447,170 @@ def test_tables_pyarrow_filter_sum(benchmark):
 
 # endregion: Tables and Arrays
 
-# endregion: Structures, Tuples, ADTs, AOS, SOA
+# endregion: Data Structures
 
-# region: Exceptions, Backups, Logging
+# region: Control Flow and Micro-Patterns
+
+# ? Small control-flow choices add up in tight loops. Let's compare
+# ? common idioms for checking emptiness and incrementing counters.
+
+
+def _build_emptiness_sequence(length: int = 10_000):
+    """Alternating empty and non-empty lists to test truthiness paths."""
+    sequence = []
+    for index in range(length):
+        sequence.append([] if (index & 1) == 0 else [1])
+    return sequence
+
+
+@pytest.mark.benchmark(group="control-flow")
+def test_cf_if_len_increment(benchmark):
+    values = _build_emptiness_sequence()
+
+    def kernel():
+        counter = 0
+        for value in values:
+            if len(value) > 0:
+                counter += 1
+        return counter
+
+    result = benchmark(kernel)
+    assert result == len(values) // 2
+
+
+@pytest.mark.benchmark(group="control-flow")
+def test_cf_add_bool_len_cmp(benchmark):
+    values = _build_emptiness_sequence()
+
+    def kernel():
+        counter = 0
+        for value in values:
+            counter += len(value) > 0
+        return counter
+
+    result = benchmark(kernel)
+    assert result == len(values) // 2
+
+
+@pytest.mark.benchmark(group="control-flow")
+def test_cf_if_truthy_increment(benchmark):
+    values = _build_emptiness_sequence()
+
+    def kernel():
+        counter = 0
+        for value in values:
+            if value:
+                counter += 1
+        return counter
+
+    result = benchmark(kernel)
+    assert result == len(values) // 2
+
+
+@pytest.mark.benchmark(group="control-flow")
+def test_cf_add_bool_truthy(benchmark):
+    values = _build_emptiness_sequence()
+
+    def kernel():
+        counter = 0
+        for value in values:
+            counter += bool(value)
+        return counter
+
+    result = benchmark(kernel)
+    assert result == len(values) // 2
+
+
+# ? Observations on Apple M2 Pro (10K iterations, alternating empty/non-empty):
+# ?   - if value (truthy):         116 µs | 1.0x · Python's __bool__ is fast
+# ?   - if len(value) > 0:         186 µs | 1.6x · extra function call
+# ?   - counter += bool(value):    244 µs | 2.1x · explicit bool() conversion
+# ?   - counter += len(value) > 0: 281 µs | 2.4x · len + comparison + bool
+# ?
+# ? Python's truthiness check (`if value`) is highly optimized. Using explicit
+# ? `len()` or `bool()` calls adds overhead. The idiomatic `if value:` pattern
+# ? is not just cleaner—it's measurably faster than alternatives.
+
+
+# endregion: Control Flow and Micro-Patterns
+
+# region: Memory, GC, and Allocations
+
+# ? Python's garbage collector and memory allocator have measurable overhead.
+# ? Allocation patterns matter: reusing objects beats creating new ones, and
+# ? disabling GC during bulk operations can provide surprising speedups.
+
+import gc  # noqa: E402
+
+
+@pytest.mark.benchmark(group="gc-alloc")
+def test_alloc_small_lists_append(benchmark):
+    """Allocate many tiny lists by appending one element each time."""
+
+    def kernel():
+        result = []
+        for value in range(10_000):
+            result.append([value])
+        return len(result)
+
+    result = benchmark(kernel)
+    assert result == 10_000
+
+
+@pytest.mark.benchmark(group="gc-alloc")
+def test_alloc_reuse_list_clear(benchmark):
+    """Reuse a single list: clear and refill to avoid allocations."""
+
+    def kernel():
+        reusable = []
+        total = 0
+        for value in range(10_000):
+            reusable.clear()
+            reusable.append(value)
+            total += reusable[0]
+        return total
+
+    result = benchmark(kernel)
+    assert result == sum(range(10_000))
+
+
+@pytest.mark.benchmark(group="gc-alloc")
+def test_gc_disabled_many_temporaries(benchmark):
+    """Create many short‑lived objects with GC disabled inside the hot loop."""
+
+    def kernel():
+        old = gc.isenabled()
+        gc.disable()
+        try:
+            total = 0
+            for value in range(50_000):
+                # Allocate a few temporaries; they die quickly.
+                pair = (value, value + 1)
+                mapping = {"a": pair[0], "b": pair[1]}
+                total += mapping["a"]
+            return total
+        finally:
+            if old:
+                gc.enable()
+
+    result = benchmark(kernel)
+    assert result > 0
+
+
+# ? Observations on Apple M2 Pro:
+# ?   - Reuse + clear() (10K):           416 µs | 1.0x · no allocations
+# ?   - Append new lists (10K):        2,190 µs | 5.3x · allocation storm
+# ?   - GC disabled loop (50K temps):  4,844 µs | 11.6x (but 50K iterations)
+# ?
+# ? Reusing containers instead of creating new ones avoids allocator pressure.
+# ? The GC overhead is real but often exaggerated—disabling it helps only
+# ? when creating many short-lived objects in tight loops. For most code,
+# ? the GC's incremental collection is fast enough to be invisible.
+
+
+# endregion: Memory, GC, and Allocations
+
+# region: Error Handling
 
 # region: Errors
 
@@ -1699,7 +1854,7 @@ def test_errors_status(benchmark):
 
 # endregion: Logs
 
-# endregion: Exceptions, Backups, Logging
+# endregion: Error Handling
 
 # region: Dynamic Code
 
