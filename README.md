@@ -12,6 +12,9 @@ University curricula often teach outdated concepts, while bootcamps oversimplify
 This repository offers practical examples of writing efficient Python code.
 The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism. Some of the highlights include:
 
+- A single emoji in a 10K-char ASCII string quadruples its size and also makes `encode('utf-8')` - 40x slower.
+- NumPy matrix multiplication with `int16` is easily 10x-100x slower than `float32` or `float64`, as BLAS can't handle integers... or strides like `[::2, ::2]`.
+- `if value:` is 2x faster than `if len(value) > 0` — Python's truthiness check skips the function call overhead.
 - Async IO, batching, HTTPX, and FastAPI won't save you from slow IO, potentially resulting in 30x slowdowns compared to the already slow Python-native TCP/IP stack.
 - Using callbacks, lambdas, and `yield`-ing functions are much faster than iterator-based routines, unlike Rust and C++.
 - Not all composite structures are equally fast: `namedtuple` is slower than { `dataclass`, `class` } is slower than `dict`.
