@@ -12,10 +12,40 @@ and `less_slow.rs` for Rust. Unlike low-level systems languages,
 Python is a high-level with significant runtime overheads, and
 no obvious way to predict the performance of code.
 
-Moreover, the performance of different language and library components
-can vary significantly between consecutive Python versions. That's
-true for both small numeric operations, and high-level abstractions,
-like iterators, generators, and async code.
+Table of Contents
+-----------------
+1. Numerics — math.sin vs np.sin, approximations, matrix decompositions
+2. Pipelines — callbacks vs generators vs iterators vs async
+3. Data Structures — tuples, dataclasses, dicts, attrs, pydantic
+4. Heterogeneous Data — type coercion, string encodings, NumPy layouts
+5. Tables & Arrays — NumPy vs Pandas vs PyArrow filtering
+6. Control Flow — if/else patterns, short-circuit evaluation
+7. Memory & GC — allocation strategies, garbage collection impact
+8. Error Handling — exceptions vs return codes vs logging overhead
+9. Reflection — getattr, eval, ast.literal_eval performance
+10. Networking — sockets, HTTP clients, async I/O patterns
+
+Documentation Convention
+------------------------
+Throughout this file, `# ?` comments provide educational context:
+- Before benchmarks: explaining WHY this comparison matters
+- After benchmarks: observations with measured timing data
+
+Running Benchmarks
+------------------
+Using uv (recommended):
+    uv pip compile requirements.in --universal --output-file requirements.txt
+    uv pip sync requirements.txt
+    uv run pytest less_slow.py --benchmark-only
+
+Run specific sections:
+    uv run pytest less_slow.py -k "string_" --benchmark-only
+    uv run pytest less_slow.py -k "layouts_" --benchmark-only
+    uv run pytest less_slow.py -k "reflection_" --benchmark-only
+
+Compare results across runs:
+    uv run pytest less_slow.py --benchmark-only --benchmark-autosave
+    uv run pytest-benchmark compare
 """
 import sys
 import platform
