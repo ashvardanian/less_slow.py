@@ -1078,7 +1078,255 @@ def test_homogeneous_container_sum(benchmark):
     assert abs(result - 3.0 * len(values)) < 1e-12
 
 
-# endregion: Heterogenous Collections
+# ? The results reveal a counter-intuitive hierarchy of approaches:
+# ?
+# ?   - np.sum (homogeneous array):       16 µs   | 1x · best
+# ?   - sum() (homogeneous list):        303 µs   | 19x
+# ?   - float() on everything:         3,943 µs   | 247x
+# ?   - isinstance() dispatch:        12,899 µs   | 806x
+# ?   - try/except (EAFP):            75,561 µs   | 4,722x · worst
+# ?
+# ? The "Easier to Ask Forgiveness than Permission" (EAFP) pattern, often
+# ? recommended in Python, is 19x slower than uniform coercion here! Why?
+# ? Because ~25% of our values (Decimal, Fraction, strings) raise TypeError
+# ? when added to a float, and Python exceptions are expensive.
+# ?
+# ? Even more surprising: isinstance() checks are 3.3x slower than just
+# ? calling float() on everything, despite avoiding the call for 50% of
+# ? elements. The isinstance() overhead itself is more expensive than
+# ? the redundant float() calls it's trying to avoid.
+# ?
+# ? The lesson: if you must work with heterogeneous numeric data, convert
+# ? everything to a uniform type upfront. Better yet, ensure homogeneity
+# ? at the data ingestion layer — a numpy array is 247x faster than
+# ? iterating with float() coercion.
+
+
+# ? Beyond numeric types, Python's string representation also has hidden costs.
+# ? PEP 393 introduced "flexible string representation" where the internal
+# ? encoding depends on the "widest" character in the string:
+# ?
+# ?   - ASCII-only (Latin-1): 1 byte per character
+# ?   - BMP Unicode (UCS-2): 2 bytes per character (chars up to U+FFFF)
+# ?   - Full Unicode (UCS-4): 4 bytes per character (emojis, rare scripts)
+# ?
+# ? A single emoji in an otherwise ASCII string causes the entire string to
+# ? use 4 bytes per character. This affects memory, but also operations like
+# ? substring search and hashing — critical for dict lookups.
+
+
+def _make_ascii_string(length: int = 10_000) -> str:
+    """Create a pure ASCII string."""
+    return "a" * length
+
+
+def _make_emoji_string(length: int = 10_000) -> str:
+    """Create a string with emojis, forcing UCS-4 (4 bytes/char) representation."""
+    return ("a" * 9 + "\U0001f525") * (length // 10)  # fire emoji
+
+
+@pytest.mark.benchmark(group="string-encodings")
+def test_string_encode_ascii(benchmark):
+    """Encode ASCII string to UTF-8 bytes."""
+    s = _make_ascii_string(10_000)
+
+    def kernel():
+        return s.encode("utf-8")
+
+    result = benchmark(kernel)
+    assert len(result) == 10_000  # 1 byte per char
+
+
+@pytest.mark.benchmark(group="string-encodings")
+def test_string_encode_emoji(benchmark):
+    """Encode emoji string to UTF-8 bytes — emojis become 4 bytes each."""
+    s = _make_emoji_string(10_000)
+
+    def kernel():
+        return s.encode("utf-8")
+
+    result = benchmark(kernel)
+    assert len(result) > 10_000  # emojis expand to 4 bytes
+
+
+@pytest.mark.benchmark(group="string-encodings")
+def test_string_join_ascii(benchmark):
+    """Join many ASCII strings."""
+    parts = ["a" * 100] * 100  # 100 strings of 100 chars
+
+    def kernel():
+        return "".join(parts)
+
+    result = benchmark(kernel)
+    assert len(result) == 10_000
+
+
+@pytest.mark.benchmark(group="string-encodings")
+def test_string_join_emoji(benchmark):
+    """Join many emoji strings — must handle 4-byte chars."""
+    parts = [("a" * 9 + "\U0001f525") * 10] * 100  # 100 strings of 100 chars
+
+    def kernel():
+        return "".join(parts)
+
+    result = benchmark(kernel)
+    assert len(result) == 10_000
+
+
+@pytest.mark.benchmark(group="string-encodings")
+def test_string_hash_ascii(benchmark):
+    """Hash ASCII string — used in every dict lookup."""
+    s = _make_ascii_string(10_000)
+
+    def kernel():
+        return hash(s)
+
+    result = benchmark(kernel)
+    assert isinstance(result, int)
+
+
+@pytest.mark.benchmark(group="string-encodings")
+def test_string_hash_emoji(benchmark):
+    """Hash emoji string — same length, different internal representation."""
+    s = _make_emoji_string(10_000)
+
+    def kernel():
+        return hash(s)
+
+    result = benchmark(kernel)
+    assert isinstance(result, int)
+
+
+# ? The memory difference is dramatic — 4x for the same logical content:
+# ?
+# ?   - ASCII string (10K chars): 10,041 bytes | 1.00 bytes/char
+# ?   - Emoji string (10K chars): 40,060 bytes | 4.01 bytes/char
+# ?
+# ? Performance varies dramatically by operation:
+# ?
+# ?   - hash(ascii):      50 ns   | 1.0x · baseline
+# ?   - hash(emoji):      97 ns   | 1.9x
+# ?   - encode(ascii):   268 ns   | 5.4x
+# ?   - join(ascii):     507 ns   | 10x
+# ?   - join(emoji):   1,612 ns   | 32x
+# ?   - encode(emoji): 10,601 ns  | 212x · 40x slower than ASCII encode!
+# ?
+# ? The encode() operation shows the most dramatic difference — converting
+# ? a UCS-4 string to UTF-8 requires examining each 4-byte character and
+# ? encoding it as 1-4 bytes. For emojis specifically, each becomes 4 UTF-8
+# ? bytes. This 40x slowdown matters for serialization, file I/O, and
+# ? network protocols that use UTF-8.
+
+
+# ? NumPy's speed comes from BLAS libraries (OpenBLAS, MKL, Accelerate),
+# ? but BLAS only accelerates specific dtypes: float32, float64, complex64,
+# ? complex128. Integer types like int16 or int32 fall back to generic loops
+# ? that can be 10-100x slower for matrix operations.
+# ?
+# ? Memory layout also matters. BLAS expects contiguous memory — either
+# ? C-order (row-major) or Fortran-order (column-major). Strided views
+# ? like arr[::2] can't use BLAS even for float64.
+
+
+@pytest.mark.benchmark(group="numpy-layouts")
+@pytest.mark.parametrize("dtype", [np.float64, np.float32, np.int32, np.int16])
+def test_layouts_matmul_dtypes(benchmark, dtype):
+    """Matrix multiply across dtypes — BLAS only accelerates floats."""
+    size = 200
+    rng = np.random.default_rng(42)
+    A = rng.integers(0, 10, size=(size, size)).astype(dtype)
+    B = rng.integers(0, 10, size=(size, size)).astype(dtype)
+
+    def kernel():
+        return A @ B
+
+    result = benchmark(kernel)
+    assert result.shape == (size, size)
+
+
+@pytest.mark.benchmark(group="numpy-layouts")
+def test_layouts_sum_contiguous(benchmark):
+    """Sum of C-contiguous array — optimal memory access pattern."""
+    size = 1_000_000
+    arr = np.arange(size, dtype=np.float64)
+
+    def kernel():
+        return np.sum(arr)
+
+    result = benchmark(kernel)
+    benchmark.extra_info["contiguous"] = arr.flags["C_CONTIGUOUS"]
+    assert result > 0
+
+
+@pytest.mark.benchmark(group="numpy-layouts")
+def test_layouts_sum_strided(benchmark):
+    """Sum of strided array (every 2nd element) — poor cache utilization."""
+    size = 1_000_000
+    arr = np.arange(size * 2, dtype=np.float64)[::2]  # stride of 2
+
+    def kernel():
+        return np.sum(arr)
+
+    result = benchmark(kernel)
+    benchmark.extra_info["contiguous"] = arr.flags["C_CONTIGUOUS"]
+    assert result > 0
+
+
+@pytest.mark.benchmark(group="numpy-layouts")
+def test_layouts_sum_fortran(benchmark):
+    """Sum of Fortran-order array — different but still contiguous."""
+    size = 1000
+    arr = np.asfortranarray(
+        np.arange(size * size, dtype=np.float64).reshape(size, size)
+    )
+
+    def kernel():
+        return np.sum(arr)
+
+    result = benchmark(kernel)
+    benchmark.extra_info["fortran_order"] = arr.flags["F_CONTIGUOUS"]
+    assert result > 0
+
+
+@pytest.mark.benchmark(group="numpy-layouts")
+def test_layouts_matmul_strided(benchmark):
+    """Matmul with strided input — forces internal copy or slow path."""
+    size = 200
+    rng = np.random.default_rng(42)
+    # Create strided views by slicing every other row/column
+    A_full = rng.random((size * 2, size * 2))
+    B_full = rng.random((size * 2, size * 2))
+    A = A_full[::2, ::2]  # strided view
+    B = B_full[::2, ::2]
+
+    def kernel():
+        return A @ B
+
+    result = benchmark(kernel)
+    benchmark.extra_info["A_contiguous"] = A.flags["C_CONTIGUOUS"]
+    assert result.shape == (size, size)
+
+
+# ? The dtype impact on matrix multiplication (200×200) is substantial:
+# ?
+# ?   - float32 (BLAS):    167 µs | 1.0x · baseline
+# ?   - float64 (BLAS):    210 µs | 1.3x
+# ?   - int16 (no BLAS): 2,850 µs | 17x slower!
+# ?   - int32 (no BLAS): 3,023 µs | 18x slower!
+# ?
+# ? Memory layout matters too, especially for matmul:
+# ?
+# ?   - sum(contiguous):   182 µs | 1.0x
+# ?   - sum(fortran):      180 µs | 1.0x · still contiguous, just column-major
+# ?   - sum(strided):      222 µs | 1.2x · cache misses hurt
+# ?   - matmul(strided): 5,725 µs | 34x slower than float32 matmul!
+# ?
+# ? The lesson: if you're doing heavy numeric computation, ensure your
+# ? arrays are (1) float32/float64 for BLAS acceleration, and (2) contiguous.
+# ? A quick `.astype(np.float64).copy()` before computation can pay off.
+
+
+# endregion: Heterogeneous Data
 
 # region: Tables and Arrays
 
