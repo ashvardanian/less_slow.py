@@ -996,11 +996,16 @@ def test_structs_attrs(benchmark):
 
 # endregion: Composite Structs
 
-# region: Heterogenous Collections
+# region: Heterogeneous Data
 
 # ? Python is a dynamically typed language, and it allows mixing different
 # ? types in a single collection. However, the performance of such collections
 # ? can vary significantly, depending on the types and their distribution.
+# ?
+# ? Consider a common scenario: you receive numeric data from various sources
+# ? (user input as strings, database results as Decimals, API responses as ints)
+# ? and need to aggregate them. What's the fastest way to sum 80,000 values
+# ? when they come in 8 different representations of the same number?
 
 
 from decimal import Decimal  # noqa: E402
@@ -1021,7 +1026,7 @@ def _represent_with_different_types(value_int: int = 3):
     ]
 
 
-@pytest.mark.benchmark(group="heterogenous-containers")
+@pytest.mark.benchmark(group="heterogeneous-containers")
 def test_heterogeneous_sum(benchmark):
     """Coerce all representations with float(); all succeed (no exceptions)."""
     seed = _represent_with_different_types()
@@ -1034,9 +1039,9 @@ def test_heterogeneous_sum(benchmark):
     assert abs(result - 3.0 * len(values)) < 1e-9
 
 
-@pytest.mark.benchmark(group="heterogenous-containers")
+@pytest.mark.benchmark(group="heterogeneous-containers")
 def test_type_matching_sum(benchmark):
-    """Coerce all representations with float(); all succeed (no exceptions)."""
+    """Use isinstance() to dispatch: add directly or coerce with float()."""
     seed = _represent_with_different_types()
     values = seed * 10_000
 
@@ -1053,7 +1058,26 @@ def test_type_matching_sum(benchmark):
     assert abs(result - 3.0 * len(values)) < 1e-9
 
 
-@pytest.mark.benchmark(group="heterogenous-containers")
+@pytest.mark.benchmark(group="heterogeneous-containers")
+def test_try_except_sum(benchmark):
+    """Use try/except to handle type coercion: EAFP style."""
+    seed = _represent_with_different_types()
+    values = seed * 10_000
+
+    def kernel():
+        sum_value = 0.0
+        for v in values:
+            try:
+                sum_value += v
+            except TypeError:
+                sum_value += float(v)
+        return sum_value
+
+    result = benchmark(kernel)
+    assert abs(result - 3.0 * len(values)) < 1e-9
+
+
+@pytest.mark.benchmark(group="heterogeneous-containers")
 def test_homogeneous_sum(benchmark):
     """Baseline: homogeneous float list with the same value."""
     values = [3.0] * (8 * 10_000)  # same total length as the hetero lists
@@ -1065,7 +1089,7 @@ def test_homogeneous_sum(benchmark):
     assert abs(result - 3.0 * len(values)) < 1e-12
 
 
-@pytest.mark.benchmark(group="heterogenous-containers")
+@pytest.mark.benchmark(group="heterogeneous-containers")
 def test_homogeneous_container_sum(benchmark):
     """Baseline: homogeneous float list with the same value."""
     values = [3.0] * (8 * 10_000)  # same total length as the hetero lists
