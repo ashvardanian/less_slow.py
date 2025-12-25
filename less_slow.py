@@ -1591,11 +1591,129 @@ def test_errors_status(benchmark):
 
 # region: Reflection, Inspection
 
+# ? Python's dynamic features — getattr, eval, introspection — are powerful
+# ? but come with performance costs. Understanding these costs helps you
+# ? decide when dynamic dispatch is worth it and when to use alternatives.
+
+import ast  # noqa: E402
+
+
+class _SmallObject:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def double(self) -> int:
+        return self.value * 2
+
+
+@pytest.mark.benchmark(group="reflection")
+def test_reflection_direct_access(benchmark):
+    """Baseline: direct attribute access."""
+    holder = _SmallObject(7)
+
+    def kernel():
+        total = 0
+        for _ in range(10_000):
+            total += holder.value
+        return total
+
+    result = benchmark(kernel)
+    assert result == 70_000
+
+
+@pytest.mark.benchmark(group="reflection")
+def test_reflection_getattr(benchmark):
+    """Access attribute via getattr() — string lookup overhead."""
+    holder = _SmallObject(7)
+
+    def kernel():
+        total = 0
+        for _ in range(10_000):
+            total += getattr(holder, "value")
+        return total
+
+    result = benchmark(kernel)
+    assert result == 70_000
+
+
+@pytest.mark.benchmark(group="reflection")
+def test_reflection_eval_string(benchmark):
+    """eval() with string source — must parse and compile each time."""
+    source = "x + y"
+
+    def kernel():
+        total = 0
+        for _ in range(1_000):
+            total += eval(source, {}, {"x": 1, "y": 2})
+        return total
+
+    result = benchmark(kernel)
+    assert result == 3_000
+
+
+@pytest.mark.benchmark(group="reflection")
+def test_reflection_eval_compiled(benchmark):
+    """eval() with precompiled code object — skip parsing/compilation."""
+    source = "x + y"
+    code_object = compile(source, filename="<expr>", mode="eval")
+
+    def kernel():
+        total = 0
+        for _ in range(1_000):
+            total += eval(code_object, {}, {"x": 1, "y": 2})
+        return total
+
+    result = benchmark(kernel)
+    assert result == 3_000
+
+
+@pytest.mark.benchmark(group="reflection")
+def test_reflection_literal_eval(benchmark):
+    """ast.literal_eval() — safe parsing of literal expressions."""
+    text = "[1, 2, 3, 4, 5]"
+
+    def kernel():
+        total = 0
+        for _ in range(1_000):
+            total += sum(ast.literal_eval(text))
+        return total
+
+    result = benchmark(kernel)
+    assert result == 15_000
+
+
+@pytest.mark.benchmark(group="reflection")
+def test_reflection_eval_literal(benchmark):
+    """eval() on literal — faster but unsafe for untrusted input."""
+    text = "[1, 2, 3, 4, 5]"
+
+    def kernel():
+        total = 0
+        for _ in range(1_000):
+            total += sum(eval(text))
+        return total
+
+    result = benchmark(kernel)
+    assert result == 15_000
+
+
+# ? Per-operation costs (normalized by iteration count):
+# ?
+# ?   - direct access:     20 ns | 1.0x · baseline
+# ?   - getattr():         31 ns | 1.6x · string lookup overhead
+# ?   - eval(compiled):   135 ns | 6.8x · bytecode execution only
+# ?   - eval(string):   2,568 ns | 128x · parse + compile + execute
+# ?   - eval(literal):  4,897 ns | 245x · building list object adds cost
+# ?   - literal_eval(): 5,741 ns | 287x · safe but slower than eval!
+# ?
+# ? Key insights:
+# ? - getattr() has ~50% overhead vs direct access — fine for occasional use
+# ? - Precompiling code objects gives 19x speedup over eval(string)
+# ? - ast.literal_eval() is safer but ~17% slower than eval() for literals
+# ? - If you need eval() in a loop, always precompile with compile()
+
+
 # endregion: Reflection, Inspection
-
-# region: Evaluating Strings
-
-# endregion: Evaluating Strings
 
 # endregion: Dynamic Code
 
