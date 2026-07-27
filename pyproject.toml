@@ -22,7 +22,7 @@ license = {file = "LICENSE"}
 name = "less_slow"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.5.1"
+version = "0.5.2"
 
 [project.urls]
 "For C++" = "https://github.com/ashvardanian/less_slow.cpp"
