@@ -74,6 +74,13 @@ try:
 except ImportError:
     pass  # skip if numba is not installed
 
+numkong_installed = False
+try:
+    import numkong as nk
+
+    numkong_installed = True
+except ImportError:
+    pass  # skip if numkong is not installed
 # region: Session Environment Info
 
 
@@ -100,6 +107,8 @@ def print_environment_info():
         lines.append(f"PyArrow: {pa.__version__}")
     if numba_installed:
         lines.append(f"Numba: {numba.__version__}")
+    if numkong_installed:
+        lines.append(f"NumKong: {nk.__version__}")
 
     print("\n".join(lines))
 
@@ -412,6 +421,54 @@ def test_qr(benchmark, n_dim: int, k_percent: float, dtype: np.dtype):
 
 
 # endregion: Matrix Decompositions
+# ? Before any question about speed, one about correctness. NumPy accumulates
+# ? an int8 dot product *in int8*, so a long one wraps silently — the result is
+# ? not approximate, it is wrong, and often the wrong sign. Nothing raises.
+# ?
+# ? This is the cheapest lesson in the chapter and the one most likely to be
+# ? already in your code: quantize a model to int8, dot the vectors, and NumPy
+# ? hands back garbage with total confidence.
+
+# region: Integer Overflow
+
+INT8_DIMENSIONS = 1536
+
+
+@pytest.mark.benchmark(group="low-precision")
+def test_lowprec_int8_dot_numpy(benchmark):
+    """NumPy keeps the accumulator in int8, so a long dot product overflows."""
+    rng = np.random.default_rng(42)
+    first = rng.integers(-128, 127, INT8_DIMENSIONS, dtype=np.int8)
+    second = rng.integers(-128, 127, INT8_DIMENSIONS, dtype=np.int8)
+    exact = int(first.astype(np.int64) @ second.astype(np.int64))
+
+    def kernel():
+        return int(np.dot(first, second))
+
+    result = benchmark(kernel)
+    benchmark.extra_info["exact"] = exact
+    benchmark.extra_info["reported"] = result
+    # ! Asserting the *wrong* answer, so this fails the day NumPy widens it.
+    assert result != exact
+
+
+@pytest.mark.skipif(not numkong_installed, reason="NumKong not installed")
+@pytest.mark.benchmark(group="low-precision")
+def test_lowprec_int8_dot_numkong(benchmark):
+    """NumKong widens the accumulator, so the same inputs come out right."""
+    rng = np.random.default_rng(42)
+    first = rng.integers(-128, 127, INT8_DIMENSIONS, dtype=np.int8)
+    second = rng.integers(-128, 127, INT8_DIMENSIONS, dtype=np.int8)
+    exact = int(first.astype(np.int64) @ second.astype(np.int64))
+
+    def kernel():
+        return int(nk.dot(first, second))
+
+    result = benchmark(kernel)
+    assert result == exact
+
+
+# endregion: Integer Overflow
 
 # endregion: Numerics
 
