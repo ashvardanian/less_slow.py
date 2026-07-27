@@ -1435,14 +1435,22 @@ def test_tables_pyarrow_filter_sum(benchmark):
     assert result >= 0.0
 
 
-# ? Observations on Apple M2 Pro (100K rows, filter even labels + sum):
+# ? Observations on Apple M2 Pro, Pandas 2.2 (100K rows, filter even labels + sum):
 # ?   - PyArrow compute:    355 µs | 1.0x · columnar kernels win
 # ?   - Pandas DataFrame:   386 µs | 1.1x · similar, more features
 # ?   - NumPy boolean mask: 634 µs | 1.8x · surprisingly slower
 # ?
-# ? PyArrow's compute kernels are optimized for columnar data and beat NumPy
-# ? for filter+aggregate workflows. Pandas is competitive and offers a richer
-# ? API. NumPy's strength is raw array math, not row filtering with conditions.
+# ? Observations on Intel Xeon Platinum 8468, Pandas 3.0 (same workload):
+# ?   - PyArrow compute:    651 µs | 1.00x · columnar kernels still win
+# ?   - NumPy boolean mask: 862 µs | 1.33x · now ahead of Pandas
+# ?   - Pandas DataFrame:   911 µs | 1.40x · lost its second place
+# ?
+# ? PyArrow's compute kernels are optimized for columnar data and win on both
+# ? machines - that part of the lesson is stable. The Pandas-vs-NumPy ordering
+# ? is not: Pandas 3.0 turned on Copy-on-Write and Arrow-backed strings, and on
+# ? this workload it dropped behind NumPy instead of trailing PyArrow closely.
+# ? A reminder that a major version of a dependency can invert a ranking you
+# ? measured once and copied into a comment forever.
 
 
 # endregion: Tables and Arrays
@@ -1521,15 +1529,27 @@ def test_cf_add_bool_truthy(benchmark):
     assert result == len(values) // 2
 
 
-# ? Observations on Apple M2 Pro (10K iterations, alternating empty/non-empty):
+# ? Observations on Apple M2 Pro, CPython 3.12 (10K iterations, alternating
+# ? empty/non-empty):
 # ?   - if value (truthy):         116 µs | 1.0x · Python's __bool__ is fast
 # ?   - if len(value) > 0:         186 µs | 1.6x · extra function call
 # ?   - counter += bool(value):    244 µs | 2.1x · explicit bool() conversion
 # ?   - counter += len(value) > 0: 281 µs | 2.4x · len + comparison + bool
 # ?
+# ? Observations on Intel Xeon Platinum 8468, CPython 3.14 free-threaded:
+# ?   - if value (truthy):         151 µs | 1.00x · still the fastest path
+# ?   - if len(value) > 0:         230 µs | 1.52x · extra function call
+# ?   - counter += len(value) > 0: 298 µs | 1.97x · len + comparison + bool
+# ?   - counter += bool(value):    311 µs | 2.06x · explicit bool() conversion
+# ?
 # ? Python's truthiness check (`if value`) is highly optimized. Using explicit
 # ? `len()` or `bool()` calls adds overhead. The idiomatic `if value:` pattern
 # ? is not just cleaner—it's measurably faster than alternatives.
+# ?
+# ? The gap is real but hardware- and build-dependent: 1.6x on the M2 Pro,
+# ? 1.5x on a free-threaded 3.14 Xeon build. The last two rows even swap
+# ? places, so treat the top row as the lesson and the exact ratios as
+# ? measurements of one machine.
 
 
 # endregion: Control Flow and Micro-Patterns
@@ -1849,10 +1869,6 @@ def test_errors_status(benchmark):
 # ? Stick to `tuple`-s with unpacking for the best performance!
 
 # endregion: Errors
-
-# regions: Logs
-
-# endregion: Logs
 
 # endregion: Error Handling
 
