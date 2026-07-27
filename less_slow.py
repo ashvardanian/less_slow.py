@@ -704,11 +704,13 @@ def test_pipeline_async(benchmark):
 # ? written in C++ or Rust. However, the iterators, don't seem like a
 # ? good design choice in Python!
 # ?
-# ?  - Callbacks: 16.8ms
-# ?  - Generators: 23.3ms
-# ?  - Iterators: 31.8ms
-# ?  - Polymorphic: 33.2ms
-# ?  - Async: 97.0ms
+# ? Intel Xeon 4 · CPython 3.14t · integers 3..49, factored and summed
+# ?
+# ?   callbacks    19.8 µs    1.00x  ▏
+# ?   generators   23.7 µs    1.20x  ▍
+# ?   iterators    35.2 µs    1.78x  █
+# ?   polymorphic  37.3 µs    1.89x  █▏
+# ?   async        93.1 µs    4.71x  ██▊
 # ?
 # ? For comparison, a fast C++/Rust implementation would take 200ns,
 # ? or __84x__ faster than the fastest Python implementation here.
@@ -759,10 +761,11 @@ def test_structs_dict_fun(benchmark):
 # ? The bytecode makes it obvious: `{"a": 1}` compiles to a single `BUILD_MAP`,
 # ? while `dict(a=1)` compiles to `LOAD_GLOBAL` + `CALL_KW` — and because that
 # ? global is user-overridable, the interpreter cannot skip the lookup.
-# ? Running `test_structs_dict` and `test_structs_dict_fun` on an Apple M2:
 # ?
-# ?  - test_structs_dict (mean): 106 ms
-# ?  - test_structs_dict_fun (mean): 130 ms
+# ? Intel Xeon 4 · CPython 3.14t · one dict per call
+# ?
+# ?   {"x": 1.0, ...}      88.4 ns    1.00x  ▏     one BUILD_MAP
+# ?   dict(x=1.0, ...)    139.9 ns    1.58x  ▊     global lookup, then call
 
 
 class PointClass:
@@ -840,23 +843,22 @@ def test_structs_tuple_indexing(benchmark):
     assert result == 3.0
 
 
-# ? Interestingly, the `namedtuple`, that is often believed to be a
-# ? performance-oriented choice, is 50% slower than both `dataclass` and
-# ? the custom class... which are in turn slower than a simple `dict`
-# ? with the same string fields!
+# ? Intel Xeon 4 · CPython 3.14t · one instance built and read per call
 # ?
-# ? - Tuple: 47ns
-# ? - Dict:  101ns
-# ? - Slots Dataclass: 112ns
-# ? - Dataclass: 122ns
-# ? - Class: 125ns
-# ? - Namedtuple: 183ns
+# ?   tuple                62.6 ns    1.00x  ▏
+# ?   dict                  112 ns    1.79x  █
+# ?   __slots__ dataclass   192 ns    3.07x  ██
+# ?   class                 202 ns    3.23x  ██
+# ?   dataclass             203 ns    3.24x  ██
+# ?   namedtuple            298 ns    4.76x  ██▊ the "fast" one, in folklore
+# ?   attrs                 544 ns    8.69x  ███▉
+# ?   pydantic              869 ns   13.89x  ████▋ validation is not free
 # ?
-# ? None of those structures validates the types of the fields, so
-# ? many Python developers resort to external libraries for that.
-# ?
-# ? - pydantic: over 6 Million downloads per day
-# ? - attrs: over 5 Million downloads per day
+# ? A bare tuple is the floor, and `namedtuple` — reached for precisely
+# ? because it sounds like a performance choice — is the slowest of the six.
+# ? None of them validates field types, which is why so much Python reaches
+# ? for `pydantic` or `attrs` instead. Both are measured below, and both cost
+# ? more than everything in this table.
 
 pydantic_installed = False
 try:
@@ -1014,11 +1016,13 @@ def test_homogeneous_container_sum(benchmark):
 
 # ? The results reveal a counter-intuitive hierarchy of approaches:
 # ?
-# ?   - np.sum (homogeneous array):       16 µs   | 1x · best
-# ?   - sum() (homogeneous list):        303 µs   | 19x
-# ?   - float() on everything:         3,943 µs   | 247x
-# ?   - isinstance() dispatch:        12,899 µs   | 806x
-# ?   - try/except (EAFP):            75,561 µs   | 4,722x · worst
+# ? Intel Xeon 4 · CPython 3.14t · 80K values, eight representations
+# ?
+# ?   np.sum, homogeneous     17.7 µs      1.00x  ▏
+# ?   sum(), homogeneous       273 µs     15.44x  ████▉
+# ?   float() on everything  3'694 µs    208.69x  █████████▍
+# ?   isinstance dispatch   16'068 µs    907.67x  ███████████▉
+# ?   try/except, EAFP      50'147 µs     2'833x  █████████████▉
 # ?
 # ? The "Easier to Ask Forgiveness than Permission" (EAFP) pattern, often
 # ? recommended in Python, is 19x slower than uniform coercion here! Why?
@@ -1133,17 +1137,21 @@ def test_string_hash_emoji(benchmark):
 
 # ? The memory difference is dramatic — 4x for the same logical content:
 # ?
-# ?   - ASCII string (10K chars): 10,041 bytes | 1.00 bytes/char
-# ?   - Emoji string (10K chars): 40,060 bytes | 4.01 bytes/char
+# ? Intel Xeon 4 · CPython 3.14t · sys.getsizeof of the string object
+# ?
+# ?   ASCII, 10K chars    10'041 B    1.00x  ▏     1.00 bytes per character
+# ?   emoji, 10K chars    40'060 B    3.99x  ██▌   4.01 bytes per character
 # ?
 # ? Performance varies dramatically by operation:
 # ?
-# ?   - hash(ascii):      50 ns   | 1.0x · baseline
-# ?   - hash(emoji):      97 ns   | 1.9x
-# ?   - encode(ascii):   268 ns   | 5.4x
-# ?   - join(ascii):     507 ns   | 10x
-# ?   - join(emoji):   1,612 ns   | 32x
-# ?   - encode(emoji): 10,601 ns  | 212x · 40x slower than ASCII encode!
+# ? Intel Xeon 4 · CPython 3.14t · 10K-character strings
+# ?
+# ?   hash(ascii)     68.9 ns     1.00x  ▏
+# ?   hash(emoji)      121 ns     1.76x  █
+# ?   encode(ascii)    211 ns     3.06x  ██
+# ?   join(ascii)      444 ns     6.45x  ███▎
+# ?   join(emoji)    1'304 ns    18.94x  █████▏
+# ?   encode(emoji)  5'251 ns    76.25x  ███████▋
 # ?
 # ? The encode() operation shows the most dramatic difference — converting
 # ? a UCS-4 string to UTF-8 requires examining each 4-byte character and
@@ -1213,24 +1221,31 @@ def test_layouts_matmul_strided(benchmark):
 
 # ? The dtype impact on matrix multiplication (200×200) is substantial:
 # ?
-# ?   - float32 (BLAS):    167 µs | 1.0x · baseline
-# ?   - float64 (BLAS):    210 µs | 1.3x
-# ?   - int16 (no BLAS): 2,850 µs | 17x slower!
-# ?   - int32 (no BLAS): 3,023 µs | 18x slower!
+# ? Intel Xeon 4 · CPython 3.14t · 200×200 matmul, best of five runs
 # ?
-# ? Memory layout matters too, especially for matmul:
+# ?   float32      38.4 µs    1.00x  ▏        BLAS
+# ?   float64      61.9 µs    1.61x  ▉        BLAS
+# ?   int16     3'228 µs     84.05x  ███████▊ no BLAS, generic loop
+# ?   int32     3'315 µs     86.32x  ███████▊ no BLAS, generic loop
 # ?
-# ?   - sum(contiguous):   182 µs | 1.0x
-# ?   - matmul(strided): 5,725 µs | 34x slower than float32 matmul!
+# ? Layout matters as much as dtype, and for the same reason — a strided view
+# ? cannot be handed to BLAS at all, so `matmul` falls back to a generic loop:
 # ?
-# ? Note that a *reduction* barely notices the layout — Fortran-order and
-# ? every-other-element strides both land within 1.2x of contiguous, which is
-# ? the noise floor. It is `matmul` that collapses, because a non-contiguous
-# ? operand cannot be handed to BLAS at all.
+# ? Intel Xeon 4 · CPython 3.14t · same 200×200 matmul, best of five
 # ?
-# ? The lesson: if you're doing heavy numeric computation, ensure your
-# ? arrays are (1) float32/float64 for BLAS acceleration, and (2) contiguous.
-# ? A quick `.astype(np.float64).copy()` before computation can pay off.
+# ?   float32 contiguous    38.4 µs    1.00x  ▏    BLAS
+# ?   float32 strided        174 µs    4.54x  ██▊  no BLAS
+# ?
+# ? Two conditions get you the fast path: a dtype BLAS implements, and
+# ? contiguous memory. Miss the dtype and you lose two orders of magnitude;
+# ? miss the layout and you lose one.
+# ?
+# ? These four rows are the best of five runs, and they need to be. The float
+# ? rows swung 12x between consecutive runs on a shared machine, because
+# ? multithreaded BLAS kernels compete for cores, while the integer rows —
+# ? a single-threaded generic loop — never moved. A single run reported
+# ? float64 at 13x float32 rather than 1.6x, which would have inverted the
+# ? lesson entirely.
 
 
 # endregion: Heterogeneous Data
@@ -1294,15 +1309,17 @@ def test_tables_pyarrow_filter_sum(benchmark):
     assert result >= 0.0
 
 
-# ? Observations on Apple M2 Pro, Pandas 2.2 (100K rows, filter even labels + sum):
-# ?   - PyArrow compute:    355 µs | 1.0x · columnar kernels win
-# ?   - Pandas DataFrame:   386 µs | 1.1x · similar, more features
-# ?   - NumPy boolean mask: 634 µs | 1.8x · surprisingly slower
+# ? Apple M2 Pro · Pandas 2.2 · 100K rows, filter even labels then sum
 # ?
-# ? Observations on Intel Xeon 4, Pandas 3.0, same workload:
-# ?   - PyArrow compute:    651 µs | 1.00x · columnar kernels still win
-# ?   - NumPy boolean mask: 862 µs | 1.33x · now ahead of Pandas
-# ?   - Pandas DataFrame:   911 µs | 1.40x · lost its second place
+# ?   PyArrow compute    355 µs    1.00x  ▏     columnar kernels win
+# ?   Pandas DataFrame   386 µs    1.09x  ▎     close behind, more features
+# ?   NumPy mask         634 µs    1.79x  █     surprisingly slower
+# ?
+# ? Intel Xeon 4 · Pandas 3.0 · same workload
+# ?
+# ?   PyArrow compute    651 µs    1.00x  ▏     still wins
+# ?   NumPy mask         862 µs    1.32x  ▌     now ahead of Pandas
+# ?   Pandas DataFrame   911 µs    1.40x  ▋     lost its second place
 # ?
 # ? PyArrow's compute kernels are optimized for columnar data and win on both
 # ? machines — that part of the lesson is stable. The Pandas-vs-NumPy ordering
@@ -1388,12 +1405,12 @@ def test_cf_add_bool_truthy(benchmark):
     assert result == len(values) // 2
 
 
-# ? Observations on Intel Xeon 4, CPython 3.14 free-threaded — 10K iterations,
-# ? alternating empty and non-empty:
-# ?   - if value (truthy):         151 µs | 1.00x · Python's __bool__ is fast
-# ?   - if len(value) > 0:         230 µs | 1.52x · extra function call
-# ?   - counter += len(value) > 0: 298 µs | 1.97x · len + comparison + bool
-# ?   - counter += bool(value):    311 µs | 2.06x · explicit bool() conversion
+# ? Intel Xeon 4 · CPython 3.14t · 10K iterations, alternating empty/non-empty
+# ?
+# ?   if value                    151 µs    1.00x  ▏     __bool__ is fast
+# ?   if len(value) > 0           230 µs    1.52x  ▊     an extra call
+# ?   counter += len(value) > 0   298 µs    1.97x  █▎    len, compare, bool
+# ?   counter += bool(value)      311 µs    2.06x  █▍    explicit conversion
 # ?
 # ? Python's truthiness check (`if value`) is highly optimized. Using explicit
 # ? `len()` or `bool()` calls adds overhead. The idiomatic `if value:` pattern
@@ -1469,15 +1486,15 @@ def test_gc_disabled_many_temporaries(benchmark):
     assert result > 0
 
 
-# ? Observations on Apple M2 Pro:
-# ?   - Reuse + clear() (10K):           416 µs | 1.0x · no allocations
-# ?   - Append new lists (10K):        2,190 µs | 5.3x · allocation storm
-# ?   - GC disabled loop (50K temps):  4,844 µs | 11.6x (but 50K iterations)
+# ? Apple M2 Pro · 10K iterations
 # ?
-# ? Reusing containers instead of creating new ones avoids allocator pressure.
-# ? The GC overhead is real but often exaggerated—disabling it helps only
-# ? when creating many short-lived objects in tight loops. For most code,
-# ? the GC's incremental collection is fast enough to be invisible.
+# ?   reuse + clear()       416 µs    1.00x  ▏     no allocations
+# ?   append new lists    2'190 µs    5.26x  ██▉   allocation storm
+# ?
+# ? Reusing a container beats allocating a fresh one, because the allocator is
+# ? the cost, not the loop. The GC-disabled benchmark runs 50K iterations and
+# ? so belongs to no ratio here — the honest comparison is against itself with
+# ? the collector left on, which is what that benchmark measures.
 
 
 # endregion: Memory, GC, and Allocations
@@ -1706,19 +1723,17 @@ def test_errors_status(benchmark):
     benchmark(runner)
 
 
-# ? The results are quite interesting! Raising exceptions beats the more
-# ? explicit `Expected` approach by 2x, but loses to tuple-based status
-# ? codes by 50%.
+# ? Intel Xeon 4 · CPython 3.14t
 # ?
-# ? - Raise: 329us
-# ? - Expected: 660us
-# ? - Status: 236us
+# ?   status tuple     232 µs    1.00x  ▏
+# ?   raise            348 µs    1.50x  ▊
+# ?   Expected object  658 µs    2.83x  █▉    the explicit one is the slowest
 # ?
-# ? That difference could grow further we get a `noexcept`-like mechanism
-# ? to annotate functions that never raise exceptions, and need no stack
-# ? tracing logic: https://github.com/python/typing/issues/604
-# ?
-# ? Stick to `tuple`-s with unpacking for the best performance!
+# ? The ordering is the surprise: the wrapper written specifically to avoid
+# ? exceptions is the slowest of the three, because it allocates an object per
+# ? call while `raise` allocates only on the unhappy path. Plain tuples win by
+# ? doing neither. The gap would widen with a `noexcept`-like annotation for
+# ? functions that never raise: https://github.com/python/typing/issues/604
 
 # endregion: Errors
 
@@ -1834,20 +1849,21 @@ def test_reflection_eval_literal(benchmark):
     assert result == 15_000
 
 
-# ? Per-operation costs (normalized by iteration count):
+# ? Intel Xeon 4 · CPython 3.14t · per operation, normalized by loop count
 # ?
-# ?   - direct access:     20 ns | 1.0x · baseline
-# ?   - getattr():         31 ns | 1.6x · string lookup overhead
-# ?   - eval(compiled):   135 ns | 6.8x · bytecode execution only
-# ?   - eval(string):   2,568 ns | 128x · parse + compile + execute
-# ?   - eval(literal):  4,897 ns | 245x · building list object adds cost
-# ?   - literal_eval(): 5,741 ns | 287x · safe but slower than eval!
+# ?   direct access    17.8 ns      1.00x  ▏
+# ?   getattr()        31.6 ns      1.78x  █          a string lookup
+# ?   eval(compiled)    156 ns      8.78x  ███▉       bytecode only
+# ?   eval(string)    4'049 ns    227.67x  █████████▌ parses every call
+# ?   literal_eval()  8'162 ns    458.90x  ██████████▊
+# ?   eval(literal)   8'640 ns    485.82x  ██████████▊
 # ?
-# ? Key insights:
-# ? - getattr() has ~50% overhead vs direct access — fine for occasional use
-# ? - Precompiling code objects gives 19x speedup over eval(string)
-# ? - ast.literal_eval() is safer but ~17% slower than eval() for literals
-# ? - If you need eval() in a loop, always precompile with compile()
+# ? Reflection is cheap; *compilation* is not. `getattr` costs a string lookup
+# ? and nothing more, so occasional use is free. But `eval` on a string pays
+# ? the parser every single call — precompile once with `compile()` and the
+# ? same work drops to bytecode execution, a 26x difference. `ast.literal_eval`
+# ? is the safe choice and here also the faster of the two literal paths, which
+# ? was not true on the machine this table previously described.
 
 
 # endregion: Reflection, Inspection
@@ -2144,16 +2160,23 @@ def test_rpc_udp_public(benchmark):
     profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient, route="public")
 
 
-# ? There's a clear difference between sending packets via `127.0.0.1` (loopback)
-# ? versus the machine's "public" IP. Loopback is effectively short-circuited in
-# ? software, yielding minimal overhead and tighter latency distributions.
-# ? By contrast, using the "public" IP can trigger NAT hairpin or firewall checks,
-# ? resulting in higher average and more variable latency, especially for UDP.
+# ? Packets sent to `127.0.0.1` are short-circuited in software. Sent to the
+# ? machine's own "public" IP they may instead traverse NAT hairpin and
+# ? firewall checks — the same destination, a different path through the
+# ? kernel. On hardware where that happens, the public route costs more.
 # ?
-# ? - TCP Loopback: from 11 us to 319 us worst-case, average 18 us
-# ? - TCP Public: from 13 us to 2'773 us worst-case, average 19 us
-# ? - UDP Loopback: from 15 us to 542 us worst-case, average 20 us
-# ? - UDP Public: from 27 us to 4'790 us worst-case, average 34 us
+# ? It does not happen here, and the negative result is worth keeping:
+# ?
+# ? Intel Xeon 4 · CPython 3.14t · 100K round trips, mean latency
+# ?
+# ?   UDP public      20.1 µs    1.00x  ▏     574 µs worst case
+# ?   UDP loopback    22.0 µs    1.09x  ▎     484 µs worst case
+# ?
+# ? This is a cloud instance with a directly attached address and no hairpin
+# ? to pay for, so the two paths are indistinguishable — 1.09x is noise. What
+# ? survives is the shape of the distribution: both routes have a mean near
+# ? 20 µs and a worst case past 480 µs, a 25x spread. The tail is the thing
+# ? that pages you at 3am, and no average will show it to you.
 # ?
 # ? Sounds interesting? I suggest reading
 # ?
@@ -2279,17 +2302,17 @@ def test_batch16_rpc_asyncio_unordered(benchmark):
 # ? of the event loop, the context switches, and the additional buffering
 # ? can make it slower than the synchronous TCP client per call.
 # ?
-# ? For 16 calls in a batch, using the 'loopback' interface, the latency is:
-# ? - Asyncio Ordered: from 579 us to 2'909 us worst-case, average 627 us
-# ? - Asyncio Unordered: from 582 us to 2'598 us worst-case, average 631 us
+# ? Per message, once the batch of 16 is normalized away:
 # ?
-# ? First, we don't see a significant improvement in latency when allowing
-# ? out-of-order processing. Second, when normalizing throughput, the
-# ? original blocking TCP client ends up being faster:
+# ? Intel Xeon 4 · CPython 3.14t · per message, batches of 16
 # ?
-# ? - Asyncio Ordered: average 39 us
-# ? - Asyncio Unordered: average 39 us
-# ? - TCP Loopback: average 18 us
+# ?   blocking TCP        22.8 µs    1.00x  ▏
+# ?   asyncio ordered     38.0 µs    1.67x  ▉     608 µs per batch
+# ?   asyncio unordered   39.5 µs    1.73x  ▉     632 µs per batch
+# ?
+# ? Allowing out-of-order completion buys nothing — the two asyncio rows are
+# ? indistinguishable. And the blocking client the event loop was meant to
+# ? improve on is twice as fast per message.
 # ?
 # ? This, however, may not be as bad as higher-level frameworks like FastAPI,
 # ? and one of the most common underlying ASGI servers, Uvicorn.
@@ -2451,15 +2474,17 @@ def test_batch16_rpc_fastapi_httpx(benchmark):
     )
 
 
-# ? The benchmark results are striking. For batch sizes of 16 messages:
+# ? Batches of 16 messages, one round trip each:
 # ?
-# ? - Raw TCP with asyncio: 0.95 milliseconds per batch (59 us per message)
-# ? - Requests+FastAPI/Uvicorn: 7.7 milliseconds per batch (0.5 ms per message)
-# ? - Async HTTPX+FastAPI/Uvicorn: 12.5 milliseconds per batch (0.8 ms per message)
+# ? Intel Xeon 4 · CPython 3.14t · per batch of 16 messages
 # ?
-# ? This demonstrates why low-latency systems often avoid HTTP and high-level
-# ? frameworks in favor of raw TCP/UDP, especially for internal services. The
-# ? arguable convenience of FastAPI comes at a significant performance cost -
-# ? about 10x slower than already slow IO stack of Python.
+# ?   raw TCP, asyncio         0.61 ms    1.00x  ▏
+# ?   requests + FastAPI      11.65 ms   19.19x  █████▏
+# ?   async HTTPX + FastAPI   24.89 ms   41.00x  ██████▍
+# ?
+# ? An HTTP framework costs an order of magnitude over a raw socket, on top of
+# ? a Python IO stack that was already slow. For internal services, where
+# ? nobody needs content negotiation or OpenAPI schemas, that is the entire
+# ? bill for convenience nobody asked for.
 
 # endregion: Networking and Databases
