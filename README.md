@@ -57,3 +57,17 @@ uv add <package>        # Or edit [project].dependencies, then `uv lock`
 uv lock --upgrade       # Refresh every pin to the newest compatible release
 uv export --format requirements-txt --no-hashes --no-emit-project -o requirements.txt
 ```
+
+## Citation
+
+If this repository helps your research, teaching, or product, please cite it:
+
+```bibtex
+@software{Vardanian_less_slow_py,
+  author = {Vardanian, Ash},
+  title = {{less_slow.py: Less Slow Coding Practices in Python}},
+  doi = {10.5281/zenodo.21626661},
+  url = {https://github.com/ashvardanian/less_slow.py},
+  license = {Apache-2.0}
+}
+```

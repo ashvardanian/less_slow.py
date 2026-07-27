@@ -1,0 +1,54 @@
+cff-version: 1.2.0
+title: "less_slow.py: Less Slow Coding Practices in Python, from Numerics & NumPy to Generators, Async IO, & Networking"
+message: "If you use this software, please cite it as below."
+type: software
+license: Apache-2.0
+version: 0.5.2
+repository-code: https://github.com/ashvardanian/less_slow.py
+url: https://ashvardanian.com/tags/less-slow/
+doi: 10.5281/zenodo.21626661
+abstract: >-
+  Educational micro-benchmarks for building a performance-first mindset in
+  Python, measuring the real cost of abstractions from a few nanoseconds
+  upward. It spans numerics and matrix decompositions with NumPy and Numba,
+  Unicode and string handling, callbacks, generators, iterators, and async
+  generators, polymorphism and dynamic dispatch, composite structures from
+  dictionaries and dataclasses to NamedTuples, attrs, and Pydantic models,
+  heterogeneous data with Pandas and Arrow, control flow and micro-patterns,
+  memory, garbage collection, and allocation behavior, error handling with
+  exceptions versus status codes, reflection and dynamic code generation,
+  plus networking with sockets, HTTPX, FastAPI, and Uvicorn.
+
+authors:
+  - family-names: Vardanian
+    given-names: Ash
+    alias: ashvardanian
+    orcid: https://orcid.org/0000-0002-4882-1815
+
+keywords:
+  - benchmarking
+  - performance-engineering
+  - python
+  - numpy
+  - numba
+  - pandas
+  - arrow
+  - pydantic
+  - asyncio
+  - free-threading
+  - pytest-benchmark
+
+references:
+  - type: software
+    title: "less_slow.cpp: Less Slow Coding Practices in C++ 20, C, CUDA, PTX, & Assembly"
+    repository-code: https://github.com/ashvardanian/less_slow.cpp
+    doi: 10.5281/zenodo.21612057
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
+  - type: software
+    title: "less_slow.rs: Less Slow Coding Practices in Rust"
+    repository-code: https://github.com/ashvardanian/less_slow.rs
+    authors:
+      - family-names: Vardanian
+        given-names: Ash
