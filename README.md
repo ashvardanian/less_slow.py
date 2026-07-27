@@ -39,18 +39,21 @@ pytest less_slow.py -x -k echo                             # Filter and stop on 
 Alternatively, run the benchmarks in a controlled environment using [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```sh
-uv run --python="3.12" --no-sync \
-    --with-requirements requirements.in \
-    pytest -ra -q less_slow.py
+uv sync                          # Create .venv from the lockfile
+uv run pytest -ra -q less_slow.py # Run all benchmarks
 ```
+
+`.python-version` pins `3.14t`, the free-threaded build — `requires-python` can only state a version range and has no way to name the no-GIL ABI, so without the pin `uv` picks the GIL build.
+Pass `--python="3.14"` to compare the two; the suite passes on 3.10 through 3.14, free-threaded or not.
 
 For `pytest`, the `-r` flag can be used to display a "short test summary info" at the end of the test session, making it easy to get a clear picture of all failures in large test suites.
 The `-ra` variant limits the summary only to failed tests, avoiding "passed" and "passed with outputs" messages.
 
-For `uv`, the `--no-sync` flag prevents `uv` from creating a `uv.lock` file or modifying an existing `.venv` folder.
-To extend the current list of dependencies, update the `requirements.in` file and run `uv sync` to update the environment.
+Dependencies live in `pyproject.toml` and are locked in `uv.lock`, which covers every platform and every Python from `requires-python` up.
+The `requirements.txt` is generated from that lockfile so readers without `uv` keep a working `pip` path — regenerate it whenever dependencies change.
 
 ```sh
-uv pip compile requirements.in --universal --output-file requirements.txt
-uv pip sync requirements.txt
+uv add <package>        # Or edit [project].dependencies, then `uv lock`
+uv lock --upgrade       # Refresh every pin to the newest compatible release
+uv export --format requirements-txt --no-hashes --no-emit-project -o requirements.txt
 ```

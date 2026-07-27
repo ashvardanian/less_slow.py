@@ -1,25 +1,40 @@
 [project]
-name = "less_slow"
-version = "0.5.1"
-description = "Microbenchmarks for a performance-first mindset in Python"
 authors = [
-    { name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com" },
+  {name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com"},
 ]
+dependencies = [
+  # Core
+  "pytest",
+  "pytest-benchmark>=5.2.3", # Numerics
+  "numba",
+  "numpy", # Composite structures and type checking
+  "attrs",
+  "pydantic", # Heterogeneous data structures
+  "pandas",
+  "pyarrow", # Networking
+  "fastapi", # HTTP server
+  "httpx", # Alternative HTTP client
+  "requests", # HTTP client
+  "uvicorn", # Underlying ASGI server
+]
+description = "Microbenchmarks for a performance-first mindset in Python"
+license = {file = "LICENSE"}
+name = "less_slow"
 readme = "README.md"
-requires-python = ">=3.8"
-license = { file = "LICENSE" }
+requires-python = ">=3.10"
+version = "0.5.1"
 
 [project.urls]
-Homepage = "https://github.com/ashvardanian/less_slow.py"
-Repository = "https://github.com/ashvardanian/less_slow.py"
-Issues = "https://github.com/ashvardanian/less_slow.py/issues"
 "For C++" = "https://github.com/ashvardanian/less_slow.cpp"
 "For Rust" = "https://github.com/ashvardanian/less_slow.rs"
+Homepage = "https://github.com/ashvardanian/less_slow.py"
+Issues = "https://github.com/ashvardanian/less_slow.py/issues"
+Repository = "https://github.com/ashvardanian/less_slow.py"
 
 [tool.pytest.ini_options]
-minversion = "6.0"
 addopts = "-ra -q"
+minversion = "6.0"
 
 [build-system]
-requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+requires = ["setuptools", "wheel"]
