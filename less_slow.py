@@ -121,12 +121,6 @@ def f64_sine_math(x: float) -> float:
     return math.sin(x)
 
 
-def f64_sine_math_cached(x: float) -> float:
-    # Cache the math.sin function lookup
-    local_sin = math.sin
-    return local_sin(x)
-
-
 def f64_sine_numpy(x: float) -> float:
     return np.sin(x)
 
@@ -148,7 +142,7 @@ def f64_sine_numpy(x: float) -> float:
 # ? approximate mathematical functions using simpler, faster operations.
 # ? For example, the Maclaurin series for sine:
 # ?
-# ?   sin(x) ≈ x - (x^3)/3! + (x^5)/5! - (x^7)/7! + ...
+# ?   sin(x) ≈ x − x³/3! + x⁵/5! − x⁷/7! + …
 # ?
 # ? is a simple polynomial approximation that converges quickly for small x.
 # ? Both can be implemented in Python, NumPy, or Numba JIT, and benchmarked.
@@ -167,13 +161,6 @@ def f64_sine_maclaurin_powless(x: float) -> float:
     x3 = x2 * x
     x5 = x3 * x2
     return x - (x3 / 6.0) + (x5 / 120.0)
-
-
-def f64_sine_maclaurin_multiply(x: float) -> float:
-    x2 = x * x
-    x3 = x2 * x
-    x5 = x3 * x2
-    return x - (x3 * 0.1666666667) + (x5 * 0.008333333333)
 
 
 # ? Let's define a couple of helper functions to run benchmarks on these functions,
@@ -210,11 +197,6 @@ def test_f64_sine_math(benchmark):
 
 
 @pytest.mark.benchmark(group="sin")
-def test_f64_sine_math_cached(benchmark):
-    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_math_cached)
-
-
-@pytest.mark.benchmark(group="sin")
 def test_f64_sine_numpy(benchmark):
     _f64_sine_run_benchmark_on_each(benchmark, f64_sine_numpy)
 
@@ -234,25 +216,10 @@ def test_f64_sine_maclaurin_powless(benchmark):
     _f64_sine_run_benchmark_on_each(benchmark, f64_sine_maclaurin_powless)
 
 
-@pytest.mark.benchmark(group="sin")
-def test_f64_sine_maclaurin_multiply(benchmark):
-    _f64_sine_run_benchmark_on_each(benchmark, f64_sine_maclaurin_multiply)
-
-
-@pytest.mark.skipif(not numba_installed, reason="Numba not installed")
-@pytest.mark.benchmark(group="sin")
-def test_f64_sine_jit(benchmark):
-    sin_fn = numba.njit(f64_sine_math)
-    sin_fn(0.0)  # trigger compilation
-    _f64_sine_run_benchmark_on_each(benchmark, sin_fn)
-
-
-@pytest.mark.skipif(not numba_installed, reason="Numba not installed")
-@pytest.mark.benchmark(group="sin")
-def test_f64_sine_maclaurin_jit(benchmark):
-    sin_fn = numba.njit(f64_sine_math_maclaurin)
-    sin_fn(0.0)  # trigger compilation
-    _f64_sine_run_benchmark_on_each(benchmark, sin_fn)
+# ? Numba compiles the kernel to machine code, which erases the interpreter
+# ? overhead that the three variants above were competing over — so one
+# ? JIT-ed benchmark is enough to make the point that the algorithmic
+# ? difference between them stops mattering once the interpreter is gone.
 
 
 @pytest.mark.skipif(not numba_installed, reason="Numba not installed")
@@ -297,8 +264,9 @@ def test_f64_sines_maclaurin_powless(benchmark):
 # ? use to speed up your code.
 # ?
 # ? For example, the Singular Value Decomposition (SVD) is a fundamental
-# ? operation proven by the Eckart-Young-Mirsky theorem to be the best
-# ? low-rank approximation of a matrix w.r.t. the Frobenius norm.
+# ? operation proven by the Eckart–Young–Mirsky theorem to be the best
+# ? rank-k approximation of a matrix w.r.t. the Frobenius norm ‖·‖_F:
+# ? A ≈ U_k · Σ_k · V_kᵀ minimizes ‖A − A_k‖_F over all rank-k matrices.
 # ?
 # ? https://en.wikipedia.org/wiki/Singular_value_decomposition
 # ? https://en.wikipedia.org/wiki/Matrix_norm#Frobenius_norm
@@ -374,8 +342,8 @@ def test_svd(benchmark, n_dim: int, k_percent: str, dtype: np.dtype):
 
 # ? SVD is not the only decomposition method. Less theoretically sound but
 # ? often faster is the QR decomposition, which is applicable to any full-rank.
-# ? It produces an orthogonal matrix Q and an upper triangular matrix R such that
-# ? A = Q @ R.
+# ? It produces an orthogonal matrix Q and an upper triangular matrix R such
+# ? that A = Q·R, with QᵀQ = I.
 
 
 @pytest.mark.benchmark(group="decomposition")
@@ -435,66 +403,12 @@ def test_qr(benchmark, n_dim: int, k_percent: float, dtype: np.dtype):
     benchmark.extra_info["flops_reduction"] = full_flops / decomposed_flops
 
 
-# ? For narrower classes of matrices we can do even better!
-# ? SciPy also provides LU and Cholesky decompositions, but LU only works for square
-# ? matrices, and Cholesky only works for symmetric positive-definite matrices (SPD).
-# ? SPD means that A = A^T and x^T @ A @ x > 0 for all non-zero vectors x.
-
-
-@pytest.mark.benchmark(group="decomposition")
-@pytest.mark.parametrize("n_dim", [1000, 5000])
-@pytest.mark.parametrize("k_percent", ["100%", "20%", "4%"])
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-def test_cholesky(benchmark, n_dim: int, k_percent: float, dtype: np.dtype):
-    k = int(n_dim * int(k_percent[:-1]) / 100)
-    m = 10  # Number of columns in the multiplication circuit
-
-    # ? Generate a random matrix and form a symmetric positive definite matrix.
-    # ? float32 needs larger regularization to stay positive definite for big matrices.
-    A = np.random.rand(n_dim, n_dim).astype(dtype)
-    reg = n_dim / 100 if dtype == np.float32 else 1 / 1000
-    A_spd = A @ A.T + np.eye(n_dim).astype(dtype) * reg
-    X = np.random.rand(n_dim, m).astype(dtype)
-
-    def baseline():
-        return A_spd @ X
-
-    def frobenius_norm(mat: np.ndarray) -> float:
-        return np.linalg.norm(mat, ord="fro")
-
-    #  Compute the Cholesky decomposition of the SPD matrix
-    L = np.linalg.cholesky(A_spd)
-    L_k = L[:, :k]
-    A_approx = L_k @ L_k.T
-
-    mean_recovery_error = frobenius_norm(A_spd - A_approx) / A_spd.size
-    expected_result = baseline()
-    max_circuit_error = 0.0
-
-    def decomposed():
-        return L_k @ (L_k.T @ X)
-
-    def bench():
-        product = baseline if k_percent == "100%" else decomposed
-        result = product()
-        mean_error = frobenius_norm(result - expected_result) / result.size
-
-        # Update the `max_circuit_error`
-        nonlocal max_circuit_error
-        max_circuit_error = max(max_circuit_error, mean_error)
-        return mean_error
-
-    # Estimate FLOPs:
-    # Full multiplication: A_spd (n_dim x n_dim) times X (n_dim x m)
-    full_flops = 2 * n_dim * n_dim * m
-    # Decomposed multiplication:
-    # 1. L_k.T @ X: 2 * k * n_dim * m flops.
-    # 2. L_k @ (result): 2 * n_dim * k * m flops.
-    decomposed_flops = 4 * n_dim * k * m
-
-    benchmark(bench)
-    benchmark.extra_info["mean_recovery_error"] = mean_recovery_error
-    benchmark.extra_info["flops_reduction"] = full_flops / decomposed_flops
+# ? For narrower classes of matrices we can do even better. SciPy also provides
+# ? LU and Cholesky decompositions, but each buys its speed by narrowing the
+# ? inputs it accepts: LU needs a square matrix, and Cholesky needs a symmetric
+# ? positive-definite one — A = Aᵀ, and xᵀ·A·x > 0 for every x ≠ 0.
+# ? They sit further along the same curve SVD and QR already trace, so the rule
+# ? generalizes: pick the decomposition your matrix structure allows.
 
 
 # endregion: Matrix Decompositions
@@ -572,8 +486,8 @@ def pipeline_callbacks() -> Tuple[int, int]:
 
 # region: Generators
 from typing import Generator  # noqa: E402
-from itertools import chain  # noqa: E402
 from functools import reduce  # noqa: E402
+from itertools import chain  # noqa: E402
 
 
 def prime_factors_generator(number: int) -> Generator[int, None, None]:
@@ -842,28 +756,10 @@ def test_structs_dict_fun(benchmark):
 # ? However, that does not apply to `{}` (or `[]`, etc) since it is a language construct
 # ? which users are unable to override, as such, the Python interpreter is free to
 # ? *simply* create the dictionary instead of performing a lookup before.
-# ? This is even clearer if you compare the bytecode for `{"a": 1}` vs `dict(a=1)`:
-# ?
-# ? Bytecode for `{"a": 1}`:
-# ? ```
-# ? LOAD_CONST               1 ('a')
-# ? LOAD_CONST               2 (1)
-# ? BUILD_MAP                1
-# ? RETURN_VALUE
-# ? ```
-# ?
-# ? Bytecode for `dict(a=1)`
-# ? ```
-# ? LOAD_GLOBAL              1 (dict + NULL)
-# ? LOAD_CONST               1 (1)
-# ? LOAD_CONST               2 (('a',))
-# ? CALL_KW                  1
-# ? RETURN_VALUE
-# ? ```
-# ?
-# ? This results in a measureable difference between the two, running the
-# ? `test_structs_dict` and `test_structs_dict_fun` benchmarks on a Apple M2
-# ? gives us the following results:
+# ? The bytecode makes it obvious: `{"a": 1}` compiles to a single `BUILD_MAP`,
+# ? while `dict(a=1)` compiles to `LOAD_GLOBAL` + `CALL_KW` — and because that
+# ? global is user-overridable, the interpreter cannot skip the lookup.
+# ? Running `test_structs_dict` and `test_structs_dict_fun` on an Apple M2:
 # ?
 # ?  - test_structs_dict (mean): 106 ms
 # ?  - test_structs_dict_fun (mean): 130 ms
@@ -944,22 +840,12 @@ def test_structs_tuple_indexing(benchmark):
     assert result == 3.0
 
 
-@pytest.mark.benchmark(group="composite-structs")
-def test_structs_tuple_unpacking(benchmark):
-    def kernel():
-        x, y, _ = (1.0, 2.0, True)
-        return x + y
-
-    result = benchmark(kernel)
-    assert result == 3.0
-
-
 # ? Interestingly, the `namedtuple`, that is often believed to be a
 # ? performance-oriented choice, is 50% slower than both `dataclass` and
 # ? the custom class... which are in turn slower than a simple `dict`
 # ? with the same string fields!
 # ?
-# ? - Tuple: 47ns (indexing) vs 43ns (unpacking)
+# ? - Tuple: 47ns
 # ? - Dict:  101ns
 # ? - Slots Dataclass: 112ns
 # ? - Dataclass: 122ns
@@ -1136,7 +1022,7 @@ def test_homogeneous_container_sum(benchmark):
 # ?
 # ? The "Easier to Ask Forgiveness than Permission" (EAFP) pattern, often
 # ? recommended in Python, is 19x slower than uniform coercion here! Why?
-# ? Because ~25% of our values (Decimal, Fraction, strings) raise TypeError
+# ? Because ≈25% of our values — Decimal, Fraction, strings — raise TypeError
 # ? when added to a float, and Python exceptions are expensive.
 # ?
 # ? Even more surprising: isinstance() checks are 3.3x slower than just
@@ -1307,36 +1193,6 @@ def test_layouts_sum_contiguous(benchmark):
 
 
 @pytest.mark.benchmark(group="numpy-layouts")
-def test_layouts_sum_strided(benchmark):
-    """Sum of strided array (every 2nd element) — poor cache utilization."""
-    size = 1_000_000
-    arr = np.arange(size * 2, dtype=np.float64)[::2]  # stride of 2
-
-    def kernel():
-        return np.sum(arr)
-
-    result = benchmark(kernel)
-    benchmark.extra_info["contiguous"] = arr.flags["C_CONTIGUOUS"]
-    assert result > 0
-
-
-@pytest.mark.benchmark(group="numpy-layouts")
-def test_layouts_sum_fortran(benchmark):
-    """Sum of Fortran-order array — different but still contiguous."""
-    size = 1000
-    arr = np.asfortranarray(
-        np.arange(size * size, dtype=np.float64).reshape(size, size)
-    )
-
-    def kernel():
-        return np.sum(arr)
-
-    result = benchmark(kernel)
-    benchmark.extra_info["fortran_order"] = arr.flags["F_CONTIGUOUS"]
-    assert result > 0
-
-
-@pytest.mark.benchmark(group="numpy-layouts")
 def test_layouts_matmul_strided(benchmark):
     """Matmul with strided input — forces internal copy or slow path."""
     size = 200
@@ -1365,9 +1221,12 @@ def test_layouts_matmul_strided(benchmark):
 # ? Memory layout matters too, especially for matmul:
 # ?
 # ?   - sum(contiguous):   182 µs | 1.0x
-# ?   - sum(fortran):      180 µs | 1.0x · still contiguous, just column-major
-# ?   - sum(strided):      222 µs | 1.2x · cache misses hurt
 # ?   - matmul(strided): 5,725 µs | 34x slower than float32 matmul!
+# ?
+# ? Note that a *reduction* barely notices the layout — Fortran-order and
+# ? every-other-element strides both land within 1.2x of contiguous, which is
+# ? the noise floor. It is `matmul` that collapses, because a non-contiguous
+# ? operand cannot be handed to BLAS at all.
 # ?
 # ? The lesson: if you're doing heavy numeric computation, ensure your
 # ? arrays are (1) float32/float64 for BLAS acceleration, and (2) contiguous.
@@ -1440,13 +1299,13 @@ def test_tables_pyarrow_filter_sum(benchmark):
 # ?   - Pandas DataFrame:   386 µs | 1.1x · similar, more features
 # ?   - NumPy boolean mask: 634 µs | 1.8x · surprisingly slower
 # ?
-# ? Observations on Intel Xeon Platinum 8468, Pandas 3.0 (same workload):
+# ? Observations on Intel Xeon 4, Pandas 3.0, same workload:
 # ?   - PyArrow compute:    651 µs | 1.00x · columnar kernels still win
 # ?   - NumPy boolean mask: 862 µs | 1.33x · now ahead of Pandas
 # ?   - Pandas DataFrame:   911 µs | 1.40x · lost its second place
 # ?
 # ? PyArrow's compute kernels are optimized for columnar data and win on both
-# ? machines - that part of the lesson is stable. The Pandas-vs-NumPy ordering
+# ? machines — that part of the lesson is stable. The Pandas-vs-NumPy ordering
 # ? is not: Pandas 3.0 turned on Copy-on-Write and Arrow-backed strings, and on
 # ? this workload it dropped behind NumPy instead of trailing PyArrow closely.
 # ? A reminder that a major version of a dependency can invert a ranking you
@@ -1529,15 +1388,9 @@ def test_cf_add_bool_truthy(benchmark):
     assert result == len(values) // 2
 
 
-# ? Observations on Apple M2 Pro, CPython 3.12 (10K iterations, alternating
-# ? empty/non-empty):
-# ?   - if value (truthy):         116 µs | 1.0x · Python's __bool__ is fast
-# ?   - if len(value) > 0:         186 µs | 1.6x · extra function call
-# ?   - counter += bool(value):    244 µs | 2.1x · explicit bool() conversion
-# ?   - counter += len(value) > 0: 281 µs | 2.4x · len + comparison + bool
-# ?
-# ? Observations on Intel Xeon Platinum 8468, CPython 3.14 free-threaded:
-# ?   - if value (truthy):         151 µs | 1.00x · still the fastest path
+# ? Observations on Intel Xeon 4, CPython 3.14 free-threaded — 10K iterations,
+# ? alternating empty and non-empty:
+# ?   - if value (truthy):         151 µs | 1.00x · Python's __bool__ is fast
 # ?   - if len(value) > 0:         230 µs | 1.52x · extra function call
 # ?   - counter += len(value) > 0: 298 µs | 1.97x · len + comparison + bool
 # ?   - counter += bool(value):    311 µs | 2.06x · explicit bool() conversion
@@ -1546,10 +1399,9 @@ def test_cf_add_bool_truthy(benchmark):
 # ? `len()` or `bool()` calls adds overhead. The idiomatic `if value:` pattern
 # ? is not just cleaner—it's measurably faster than alternatives.
 # ?
-# ? The gap is real but hardware- and build-dependent: 1.6x on the M2 Pro,
-# ? 1.5x on a free-threaded 3.14 Xeon build. The last two rows even swap
-# ? places, so treat the top row as the lesson and the exact ratios as
-# ? measurements of one machine.
+# ? Only the top row is portable. An Apple M2 Pro on CPython 3.12 put the gap
+# ? at 1.6x rather than 1.52x and swapped the bottom two rows — see the tables
+# ? section for a case where a version bump inverts a ranking outright.
 
 
 # endregion: Control Flow and Micro-Patterns
@@ -2015,7 +1867,6 @@ def test_reflection_eval_literal(benchmark):
 import socket  # for TCP and UDP servers # noqa: E402
 import inspect  # to get the source code of a function # noqa: E402
 import subprocess  # to start a server in a subprocess # noqa: E402
-import sys  # to get the Python executable # noqa: E402
 import time  # sleep for a bit until the socket binds # noqa: E402
 from abc import ABC, abstractmethod  # to define abstract classes # noqa: E402
 from typing import Literal  # noqa: E402
@@ -2289,11 +2140,6 @@ def test_rpc_udp_loopback(benchmark):
 
 
 @pytest.mark.benchmark(group="echo")
-def test_rpc_tcp_public(benchmark):
-    profile_echo_latency(benchmark, TCPEchoServer, TCPEchoClient, route="public")
-
-
-@pytest.mark.benchmark(group="echo")
 def test_rpc_udp_public(benchmark):
     profile_echo_latency(benchmark, UDPEchoServer, UDPEchoClient, route="public")
 
@@ -2470,61 +2316,6 @@ class FastAPIEchoServer(EchoServer):
         uvicorn.run(app, host=self.host, port=self.port, log_level="error")
 
 
-class UvicornEchoServer(EchoServer):
-    """
-    Minimal raw ASGI echo server on /echo. No FastAPI or Starlette, just
-    uvicorn + a single scope check for POST /echo. Returns the request
-    body verbatim with content-type=application/octet-stream.
-    """
-
-    def run(self):
-        import uvicorn
-
-        async def app(scope, receive, send):
-            if scope["type"] == "http":
-                # Check path; if not /echo, return 404
-                if scope.get("path", "") != "/echo":
-                    await send(
-                        {"type": "http.response.start", "status": 404, "headers": []}
-                    )
-                    await send(
-                        {
-                            "type": "http.response.body",
-                            "body": b"Not Found",
-                            "more_body": False,
-                        }
-                    )
-                    return
-
-                body = b""
-                more_body = True
-                while more_body:
-                    event = await receive()
-                    if event["type"] == "http.request":
-                        body += event.get("body", b"")
-                        more_body = event.get("more_body", False)
-
-                # Echo the body
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": 200,
-                        "headers": [
-                            (b"content-type", b"application/octet-stream"),
-                        ],
-                    }
-                )
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": body,
-                        "more_body": False,
-                    }
-                )
-
-        uvicorn.run(app, host=self.host, port=self.port, log_level="error")
-
-
 class RequestsClient(EchoClient):
     """
     A simple requests-based client, calling POST /echo with the raw data in the
@@ -2649,32 +2440,6 @@ def test_batch16_rpc_fastapi_requests(benchmark):
 
 @pytest.mark.benchmark(group="echo")
 def test_batch16_rpc_fastapi_httpx(benchmark):
-    profile_echo_latency(
-        benchmark,
-        FastAPIEchoServer,
-        HTTPXAsyncEchoClient,
-        route="loopback",
-        batch_size=16,
-        use_batching=True,
-        rounds=1_000,
-    )
-
-
-@pytest.mark.benchmark(group="echo")
-def test_batch16_rpc_uvicorn_requests(benchmark):
-    profile_echo_latency(
-        benchmark,
-        FastAPIEchoServer,
-        RequestsClient,
-        route="loopback",
-        batch_size=16,
-        use_batching=False,  # ! Requests are typically synchronous
-        rounds=1_000,
-    )
-
-
-@pytest.mark.benchmark(group="echo")
-def test_batch16_rpc_uvicorn_httpx(benchmark):
     profile_echo_latency(
         benchmark,
         FastAPIEchoServer,
