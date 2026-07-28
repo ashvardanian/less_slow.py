@@ -18,11 +18,25 @@ The topics range from basic micro-kernels executing in a few nanoseconds to more
 - Async IO, batching, HTTPX, and FastAPI won't save you from slow IO, potentially resulting in 30x slowdowns compared to the already slow Python-native TCP/IP stack.
 - Using callbacks, lambdas, and `yield`-ing functions are much faster than iterator-based routines, unlike Rust and C++.
 - Not all composite structures are equally fast: `namedtuple` is slower than { `dataclass`, `class` } is slower than `dict`.
+- `sys.getsizeof` reports 48 bytes for a dataclass instance that really costs 185 — and `__slots__` saves 1.3x, not the 2-3x folklore.
+- Slicing 900 KB of `bytes` copies it; slicing a `memoryview` doesn't — and the gap grows with the slice, without bound.
 - Depending on your design, error handling with status codes can be 50% faster or 2x slower than exceptions.
 - NumPy-based logic can be much slower than `math` functions depending on the shape of the input.
 - JIT compilers like Numba can make your code 2x slower, even if the kernels are precompiled if they are short.
 
-To read, jump to the `less_slow.py` source file and read the code snippets and comments.
+The benchmarks are split into numbered chapters, ordered from the silicon
+outward — arithmetic, then memory, then data structures, then the interpreter,
+then the OS, then the network:
+
+```
+less_slow_01_basics.py         less_slow_06_errors.py
+less_slow_02_numerics.py       less_slow_07_reflection.py
+less_slow_03_memory.py         less_slow_08_parallelism.py
+less_slow_04_structures.py     less_slow_09_accelerators.py
+less_slow_05_abstractions.py   less_slow_10_networking.py
+```
+
+Read them in order, or jump to whichever chapter you are most curious about.
 
 ## Reproducing the Benchmarks
 
@@ -32,15 +46,16 @@ If you are familiar with Python and want to review code and measurements as you 
 git clone https://github.com/ashvardanian/less_slow.py.git # Clone the repository
 cd less_slow.py                                            # Change the directory
 pip install -r requirements.txt                            # Install the dependencies
-pytest less_slow.py                                        # Run all benchmarks
-pytest less_slow.py -x -k echo                             # Filter and stop on failure
+pytest                                                     # Run all benchmarks
+pytest less_slow_02_numerics.py                            # Run one chapter
+pytest -x -k echo                                          # Filter and stop on failure
 ```
 
 Alternatively, run the benchmarks in a controlled environment using [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```sh
 uv sync                          # Create .venv from the lockfile
-uv run pytest -ra -q less_slow.py # Run all benchmarks
+uv run pytest -ra -q             # Run all benchmarks
 ```
 
 `.python-version` pins `3.14t`, the free-threaded build — `requires-python` can only state a version range and has no way to name the no-GIL ABI, so without the pin `uv` picks the GIL build.
