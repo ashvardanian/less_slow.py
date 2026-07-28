@@ -46,16 +46,22 @@ iniconfig==2.3.0
     # via pytest
 llvmlite==0.48.0
     # via numba
+ml-dtypes==0.5.4
+    # via less-slow
 numba==0.66.0
+    # via less-slow
+numkong==7.7.0
     # via less-slow
 numpy==2.2.6 ; python_full_version < '3.11'
     # via
     #   less-slow
+    #   ml-dtypes
     #   numba
     #   pandas
 numpy==2.4.6 ; python_full_version >= '3.11'
     # via
     #   less-slow
+    #   ml-dtypes
     #   numba
     #   pandas
 packaging==26.2

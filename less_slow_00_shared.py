@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Optional-dependency probes, shared by every chapter.
+"""Dependency probes shared by every chapter.
 
 `pytest.mark.skipif` is evaluated at import time, not at call time, so these
 flags cannot be fixtures — each chapter imports the ones it needs directly.
 
-Every optional name is bound unconditionally, to `None` when the import
-fails. Without that a missing dependency turns into a collection error rather
-than the skip it should be, which is exactly the failure this file exists to
-prevent.
+Only CUDA is genuinely optional: `nvmath` drags in roughly 2.9 GB of CUDA
+libraries, while every other dependency here is smaller than pandas. Its
+names are bound to `None` when absent, so a machine without a GPU gets skips
+rather than a collection error. The `pyarrow` and `numba` probes are legacy
+tolerance for partial installs; both are required in `pyproject.toml`.
 """
 
+import ml_dtypes  # NumPy-native fp8 and bfloat16 dtypes
+import numkong as nk
 import numpy as np
 
-# ? Every optional name is bound unconditionally, so chapters can import it and
-# ? let the `skipif` flags do the gating. Without this a missing dependency
-# ? turns into a collection error instead of a skip.
-pa = pc = numba = nk = ml_dtypes = nvmath = None
-cublas_matmul = MatmulQuantizationScales = None
+# ? Bound unconditionally so chapters can import them and let `skipif` gate.
+nvmath = cublas_matmul = MatmulQuantizationScales = None
 
 pandas_installed = True
 try:
@@ -38,22 +38,6 @@ try:
 except ImportError:
     pass  # skip if numba is not installed
 
-numkong_installed = False
-try:
-    import numkong as nk
-
-    numkong_installed = True
-except ImportError:
-    pass  # skip if numkong is not installed
-
-ml_dtypes_installed = False
-try:
-    import ml_dtypes  # provides NumPy-native fp8 and bfloat16 dtypes
-
-    ml_dtypes_installed = True
-except ImportError:
-    pass
-
 # ? Importing nvmath is not enough — it succeeds on machines with no GPU, and
 # ? even on machines whose driver predates the bundled CUDA runtime. The guard
 # ? has to attempt real work, so we defer that to the first benchmark.
@@ -70,7 +54,7 @@ except ImportError:
 
 def _cublas_usable() -> bool:
     """Probe an actual matmul: import success does not imply a working GPU."""
-    if not (nvmath_installed and ml_dtypes_installed):
+    if not nvmath_installed:
         return False
     try:
         probe = np.ones((16, 16), dtype=np.float32)

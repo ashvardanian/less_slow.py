@@ -23,7 +23,6 @@ import pytest
 from less_slow_00_shared import (
     gpu_matmul_usable,
     numba_installed,
-    numkong_installed,
     nvmath_installed,
     pandas_installed,
     pyarrow_installed,
@@ -33,11 +32,10 @@ if pyarrow_installed:
     import pyarrow as pa
 if numba_installed:
     import numba
-if numkong_installed:
-    import numkong as nk
+import numkong as nk
+
 if nvmath_installed:
     import nvmath
-
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -72,12 +70,9 @@ def print_environment_info():
         lines.append(f"PyArrow: {pa.__version__}")
     if numba_installed:
         lines.append(f"Numba: {numba.__version__}")
-    if numkong_installed:
-        lines.append(f"NumKong: {nk.__version__}")
+    lines.append(f"NumKong: {nk.__version__}")
     if nvmath_installed:
         state = "GPU matmul ready" if gpu_matmul_usable else "no usable GPU"
         lines.append(f"nvmath: {nvmath.__version__} | {state}")
 
     print("\n".join(lines))
-
-

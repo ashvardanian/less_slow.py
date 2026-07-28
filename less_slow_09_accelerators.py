@@ -33,9 +33,7 @@ from less_slow_00_shared import (
     cublas_matmul,
     gpu_matmul_usable,
     ml_dtypes,
-    ml_dtypes_installed,
     nk,
-    numkong_installed,
     nvmath,
 )
 
@@ -72,7 +70,6 @@ def test_lowprec_int8_dot_numpy(benchmark):
     assert result != exact
 
 
-@pytest.mark.skipif(not numkong_installed, reason="NumKong not installed")
 @pytest.mark.benchmark(group="09-accelerators-integer-overflow")
 def test_lowprec_int8_dot_numkong(benchmark):
     """NumKong widens the accumulator, so the same inputs come out right."""
@@ -168,8 +165,6 @@ def matmul_threads():
         yield pool
 
 
-@pytest.mark.skipif(not numkong_installed, reason="NumKong not installed")
-@pytest.mark.skipif(not ml_dtypes_installed, reason="ml_dtypes not installed")
 @pytest.mark.benchmark(group="09-accelerators-dtype-numkong")
 @pytest.mark.parametrize("dtype_name", ["float32", "bfloat16", "e4m3"])
 def test_dtype_numkong(benchmark, dtype_name, matmul_threads):
@@ -284,9 +279,7 @@ def test_scaling_cpu(benchmark, side: int):
     assert benchmark(kernel).shape == (side, side)
 
 
-@pytest.mark.skipif(
-    not (gpu_matmul_usable and ml_dtypes_installed), reason="no usable cuBLAS GPU"
-)
+@pytest.mark.skipif(not gpu_matmul_usable, reason="no usable cuBLAS GPU")
 @pytest.mark.benchmark(group="09-accelerators-scaling-gpu")
 @pytest.mark.parametrize("side", SCALING_SIDES)
 def test_scaling_gpu(benchmark, side: int):

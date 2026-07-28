@@ -3,19 +3,22 @@ authors = [
   {name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com"},
 ]
 dependencies = [
-  # Core
+  # Benchmarking harness
   "pytest",
-  "pytest-benchmark>=5.2.3", # Numerics
+  "pytest-benchmark>=5.2.3", # Numerics and low-precision types
+  "numpy",
   "numba",
-  "numpy", # Composite structures and type checking
+  "ml-dtypes", # NumPy-native fp8 and bfloat16 dtypes
+  "numkong", # SIMD kernels for the types NumPy lacks
+  # Composite structures and validation
   "attrs",
-  "pydantic", # Heterogeneous data structures
+  "pydantic", # Heterogeneous and tabular data
   "pandas",
   "pyarrow", # Networking
   "fastapi", # HTTP server
-  "httpx", # Alternative HTTP client
-  "requests", # HTTP client
   "uvicorn", # Underlying ASGI server
+  "requests", # HTTP client
+  "httpx", # Alternative HTTP client
 ]
 description = "Microbenchmarks for a performance-first mindset in Python"
 license = {file = "LICENSE"}
@@ -23,6 +26,12 @@ name = "less_slow"
 readme = "README.md"
 requires-python = ">=3.10"
 version = "0.5.2"
+
+[project.optional-dependencies]
+# cuBLASLt through nvmath-python. The only optional dependency, because it
+# pulls roughly 2.9 GB of CUDA libraries - five times the rest of the install
+# - while every other dependency here is smaller than pandas.
+cuda = ["nvmath-python[cu12]>=1.0.0"]
 
 [project.urls]
 Citation = "https://doi.org/10.5281/zenodo.21626661"
@@ -35,6 +44,7 @@ Repository = "https://github.com/ashvardanian/less_slow.py"
 [tool.pytest.ini_options]
 addopts = "-ra -q"
 minversion = "6.0"
+python_files = "less_slow_[0-9][0-9]_*.py"
 
 [build-system]
 build-backend = "setuptools.build_meta"
