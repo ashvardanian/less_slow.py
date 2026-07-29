@@ -25,7 +25,7 @@ license = {file = "LICENSE"}
 name = "less_slow"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.5.2"
+version = "1.0.0"
 
 [project.optional-dependencies]
 # cuBLASLt through nvmath-python. The only optional dependency, because it

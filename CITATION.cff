@@ -3,7 +3,7 @@ title: "less_slow.py: Less Slow Coding Practices in Python, from Numerics & NumP
 message: "If you use this software, please cite it as below."
 type: software
 license: Apache-2.0
-version: 0.5.2
+version: 1.0.0
 repository-code: https://github.com/ashvardanian/less_slow.py
 url: https://ashvardanian.com/tags/less-slow/
 doi: 10.5281/zenodo.21626661
