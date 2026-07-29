@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "ms-python.python", // Python language support
+        "ms-python.vscode-pylance", // Type checking and IntelliSense
+        "charliermarsh.ruff", // Linting and formatting
+        "aaron-bond.better-comments", // Colors the `# ?` prose and `# !` warnings
+        "streetsidesoftware.code-spell-checker", // Avoid typos
+        "tamasfe.even-better-toml", // For pyproject.toml
+    ]
+}

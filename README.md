@@ -12,17 +12,21 @@ University curricula often teach outdated concepts, while bootcamps oversimplify
 This repository offers practical examples of writing efficient Python code.
 The topics range from basic micro-kernels executing in a few nanoseconds to more complex constructs involving parallel algorithms, coroutines, and polymorphism. Some of the highlights include:
 
-- A single emoji in a 10K-char ASCII string quadruples its size and also makes `encode('utf-8')` - 40x slower.
-- NumPy matrix multiplication with `int16` is easily 10x-100x slower than `float32` or `float64`, as BLAS can't handle integers... or strides like `[::2, ::2]`.
-- `if value:` is ~1.5x faster than `if len(value) > 0` — Python's truthiness check skips the function call overhead.
-- Async IO, batching, HTTPX, and FastAPI won't save you from slow IO, potentially resulting in 30x slowdowns compared to the already slow Python-native TCP/IP stack.
+- A single emoji in a 10K-char ASCII string quadruples its size and also makes `encode('utf-8')` - 25x slower.
+- NumPy matrix multiplication with `int32` is over 100x slower than `float32` or `float64`, because BLAS has no kernel for integers at all.
+- `if value:` is ~1.5x faster than `if len(value) > 0`, which pays for a global lookup and a call to read the same length.
+- Binding `push = out.append` before a loop was the classic CPython speed-up; it is now 1.13x _slower_ than plain `out.append(x)`, because the shortcut defeats the interpreter's specialized method call.
+- Async IO, batching, HTTPX, and FastAPI won't save you from slow IO: an HTTP round trip costs 58-112x a raw socket carrying the same bytes.
+- Sending 16 HTTPX requests concurrently is 1.95x slower than sending them one at a time, because the uvicorn server behind them runs a single worker and handles them serially anyway.
 - Using callbacks, lambdas, and `yield`-ing functions are much faster than iterator-based routines, unlike Rust and C++.
 - Not all composite structures are equally fast: `namedtuple` is slower than { `dataclass`, `class` } is slower than `dict`.
-- `sys.getsizeof` reports 48 bytes for a dataclass instance that really costs 185 — and `__slots__` saves 1.3x, not the 2-3x folklore.
+- `sys.getsizeof` reports 48 bytes for a dataclass instance that really costs 185 — and `__slots__` saves 1.3x, not the 2–3x folklore.
 - Slicing 900 KB of `bytes` copies it; slicing a `memoryview` doesn't — and the gap grows with the slice, without bound.
-- Depending on your design, error handling with status codes can be 50% faster or 2x slower than exceptions.
-- NumPy-based logic can be much slower than `math` functions depending on the shape of the input.
-- JIT compilers like Numba can make your code 2x slower, even if the kernels are precompiled if they are short.
+- Exceptions are the _fastest_ error-handling style below a ~15% failure rate and the slowest above 20%; only their cost moves with the rate.
+- Clearing and refilling one list to avoid allocating a fresh one is 1.6x _slower_ than just allocating, because two method calls cost more than the allocation they replace.
+- `gc.disable()` around a bulk loop changes nothing at all — 1.00x, even on garbage that forms reference cycles, which is the only kind the collector exists to handle.
+- NumPy only overtakes the `math` module past 8 to 16 elements: it costs ~340 ns before touching a single one, against ~40 ns per element for a plain Python loop.
+- JIT compilers like Numba can leave you 2.1x slower than `math.sin`, because the kernel is compiled but the loop calling it ten thousand times is not.
 
 The benchmarks are split into numbered chapters, ordered from the silicon
 outward — arithmetic, then memory, then data structures, then the interpreter,

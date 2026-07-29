@@ -1,5 +1,23 @@
 {
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  // Docstrings are strings, not comments, so Better Comments never sees them.
+  // MagicPython tags them apart from ordinary strings, which a theme rule can
+  // reach — otherwise every chapter opener reads as a wall of string literal.
+  "editor.tokenColorCustomizations": {
+    "textMateRules": [
+      {
+        "scope": [
+          "string.quoted.docstring.multi.python",
+          "string.quoted.docstring.raw.multi.python",
+          "string.quoted.docstring.single.python"
+        ],
+        "settings": {
+          "foreground": "#7FB3C8",
+          "fontStyle": "italic"
+        }
+      }
+    ]
+  },
   "cSpell.words": [
     "ASGI",
     "ashvardanian",
