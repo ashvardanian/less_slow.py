@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Data structures — what a record costs to build, to hold, and to search.
+"""Data structures — what a record costs to build, to hold.
 
 Four questions about the same data. Constructing it: a bare tuple is the
 floor and `namedtuple` — reached for precisely because it sounds like the
@@ -13,7 +13,7 @@ since 3.11 the attributes live in an inline preheader it never walks, and
 Then text, where the sharp result is that `re` caches compiled patterns in a
 512-entry dict: exceed it with patterns built from user input and every call
 silently recompiles, at 25x. And tables, where a major version of Pandas
-inverted a ranking this file had already published — a reminder that measured
+inverted a ranking published here two years earlier — a reminder that measured
 numbers have a shelf life.
 """
 import gc
@@ -33,13 +33,13 @@ if pyarrow_installed:
 
 # region: Composite Structs
 
-# ? Python has many ways of defining composite objects. The most common
-# ? are tuples, dictionaries, named-tuples, dataclasses, and classes.
-# ? Let's compare them by assembling a simple composite of numeric values.
+# ? A record with three fields can be a tuple, a dict, a class, a dataclass, a
+# ? namedtuple, or a validated model, and the choice is usually made on how the
+# ? code will read. It costs a factor of thirty-six.
 # ?
-# ? We prefer `float` and `bool` fields as the most predictable Python types,
-# ? as the `int` integers in Python involve a lot of additional logic for
-# ? arbitrary-precision arithmetic, which can affect the latencies.
+# ? Fields are `float` and `bool` deliberately. Python's `int` is
+# ? arbitrary-precision, so integer fields would mix allocation behaviour into
+# ? a measurement about record shape.
 
 from dataclasses import dataclass  # noqa: E402
 from collections import namedtuple  # noqa: E402
@@ -65,19 +65,22 @@ def test_structs_dict_fun(benchmark):
     assert result == 3.0
 
 
-# ? Python's dynamic nature allows users to override builtin functions, this means that
-# ? calls to `dict` (or `list`, `tuple`, etc) require a lookup before execution.
-# ? However, that does not apply to `{}` (or `[]`, etc) since it is a language construct
-# ? which users are unable to override, as such, the Python interpreter is free to
-# ? *simply* create the dictionary instead of performing a lookup before.
-# ? The bytecode makes it obvious: `{"a": 1}` compiles to a single `BUILD_MAP`,
-# ? while `dict(a=1)` compiles to `LOAD_GLOBAL` + `CALL_KW` — and because that
-# ? global is user-overridable, the interpreter cannot skip the lookup.
+# ? `{}` is syntax and `dict()` is a name, and nothing else separates them.
+# ? Syntax compiles to `BUILD_MAP`. A name has to be looked up first, because
+# ? any module is free to rebind `dict` — so the interpreter is not allowed to
+# ? assume it means the builtin:
 # ?
-# ? Intel Xeon 4 · CPython 3.14t · one dict per call
+# ?   {"x": 1.0}     BUILD_MAP
+# ?   dict(x=1.0)    LOAD_GLOBAL dict → CALL_KW
 # ?
-# ?   {"x": 1.0, ...}      88.4 ns    1.00x  one BUILD_MAP
-# ?   dict(x=1.0, ...)    139.9 ns    1.58x  global lookup, then call
+# ? Intel Xeon 4 • CPython 3.14t • timeit, one dict built and read per call
+# ?
+# ?   {"x": 1.0, ...}      85.8 ns    1.00x  one BUILD_MAP
+# ?   dict(x=1.0, ...)    130.6 ns    1.52x  global lookup, then call
+# ?
+# ? The same asymmetry holds for `[]` against `list()` and `()` against
+# ? `tuple()`. Dynamism has a standing price, and it is charged even to code
+# ? that never uses it.
 
 
 class PointClass:
@@ -132,6 +135,18 @@ def test_structs_slots_dataclass(benchmark):
     assert result == 3.0
 
 
+# ? `namedtuple` is where intuition fails. A tuple underneath ought to mean
+# ? tuple speed, but the name is bound to generated Python:
+# ?
+# ?   tuple         BUILD_TUPLE, then index          24.4 ns
+# ?   namedtuple    __new__ → _tuple_new, then       199.5 ns
+# ?                 a property descriptor per field
+# ?
+# ? So it lands at 8.17x the thing it wraps, and slower than the `class` it was
+# ? supposed to be a lightweight alternative to. Field names are not free when
+# ? they are implemented in the language rather than in the layout.
+
+
 PointNamedtuple = namedtuple("PointNamedtuple", ["x", "y", "flag"])
 
 
@@ -155,22 +170,23 @@ def test_structs_tuple_indexing(benchmark):
     assert result == 3.0
 
 
-# ? Intel Xeon 4 · CPython 3.14t · one instance built and read per call
+# ? Intel Xeon 4 • CPython 3.14t • timeit, one record built and read per call
 # ?
-# ?   tuple                62.6 ns    1.00x
-# ?   dict                  112 ns    1.79x
-# ?   __slots__ dataclass   192 ns    3.07x
-# ?   class                 202 ns    3.23x
-# ?   dataclass             203 ns    3.24x
-# ?   namedtuple            298 ns    4.76x  the "fast" one, in folklore
-# ?   attrs                 544 ns    8.69x
-# ?   pydantic              869 ns   13.89x  validation is not free
+# ?   tuple                 24.4 ns    1.00x  no names, no class
+# ?   dict literal          85.8 ns    3.51x
+# ?   __slots__ dataclass  115.6 ns    4.73x
+# ?   class                124.9 ns    5.11x
+# ?   dict() call          130.6 ns    5.35x
+# ?   dataclass            135.0 ns    5.53x
+# ?   namedtuple           199.5 ns    8.17x  the "fast" one, in folklore
+# ?   attrs                511.9 ns   20.97x  validation
+# ?   pydantic             873.3 ns   35.77x  validation and coercion
 # ?
-# ? A bare tuple is the floor, and `namedtuple` — reached for precisely
-# ? because it sounds like a performance choice — is the slowest of the six.
-# ? None of them validates field types, which is why so much Python reaches
-# ? for `pydantic` or `attrs` instead. Both are measured below, and both cost
-# ? more than everything in this table.
+# ? None of the first seven rows checks that `x` is a float. The last two do,
+# ? which is the entire gap — `pydantic` will also coerce `"1.0"` into `1.0`,
+# ? and that flexibility is what you are buying at 36x. Whether it is worth it
+# ? depends on whether the data is already trusted, which for a record built
+# ? in-process from your own code it usually is.
 
 pydantic_installed = False
 try:
@@ -222,144 +238,125 @@ def test_structs_attrs(benchmark):
 
 # region: Object Footprint
 
-# ? The section above times construction. Memory is the other half of the story,
-# ? and the obvious tool for it is a trap. `sys.getsizeof` is shallow — it never
-# ? follows references — and since CPython 3.11 it does not even count an
-# ? instance's own attribute storage, which lives in an inline preheader rather
-# ? than a separate `__dict__`. So it under-reports the very objects you most
-# ? want to measure.
+# ? Asking an object how big it is does not work. `sys.getsizeof` is shallow —
+# ? it never follows a reference — and since CPython 3.11 it does not even
+# ? count an instance's own attributes, which live in an inline preheader
+# ? rather than a separate `__dict__`. It under-reports precisely the objects
+# ? worth measuring.
 # ?
-# ? `tracemalloc` sees what actually happened. We allocate many objects with
-# ? distinct field values — reusing `1.0` would share one float and understate
-# ? every row — and divide the delta by the count.
+# ? Recursive sizers are worse: reading `obj.__dict__` *materializes* those
+# ? inline values into a real dictionary, adding 64 B per instance. The tool
+# ? changes the thing it measures.
+# ?
+# ? What works is allocating ten thousand records and watching the allocator.
 
 import tracemalloc  # noqa: E402
 
+POINT_DTYPE = np.dtype([("x", np.float64), ("y", np.float64), ("flag", np.bool_)])
 
-def _bytes_per_item(factory, count: int = 10_000) -> float:
-    """Allocate `count` distinct objects, reporting the true bytes each costs."""
+
+def _bytes_per_record(build, count: int = 10_000) -> float:
+    """Allocate `count` records through `build`, reporting the bytes each costs."""
     gc.collect()
     tracemalloc.start()
-    baseline, _ = tracemalloc.get_traced_memory()
-    items = [factory(index) for index in range(count)]
-    peak, _ = tracemalloc.get_traced_memory()
+    before, _ = tracemalloc.get_traced_memory()
+    records = build(count)
+    after, _ = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    assert len(items) == count
-    return (peak - baseline) / count
+    assert len(records) == count
+    return (after - before) / count
 
 
-@pytest.mark.benchmark(group="04-structures-footprint")
-def test_footprint_dict(benchmark):
-    """A `dict` per point — the most flexible layout, and the fattest."""
-
-    def kernel():
-        return _bytes_per_item(
-            lambda index: {"x": float(index), "y": float(index), "flag": True}
-        )
-
-    result = benchmark(kernel)
-    assert result > 0
+def _build_numpy(count: int):
+    points = np.zeros(count, dtype=POINT_DTYPE)
+    points["x"] = np.arange(count, dtype=np.float64)
+    points["y"] = np.arange(count, dtype=np.float64)
+    return points
 
 
-@pytest.mark.benchmark(group="04-structures-footprint")
-def test_footprint_dataclass(benchmark):
-    """A dataclass — and the gap between reported and real size."""
-    reported = sys.getsizeof(PointDataclass(1.0, 2.0, True))
-
-    def kernel():
-        return _bytes_per_item(
-            lambda index: PointDataclass(float(index), float(index), True)
-        )
-
-    result = benchmark(kernel)
-    benchmark.extra_info["getsizeof"] = reported
-    # ! `getsizeof` under-reports by roughly 4x — this assert is the lesson,
-    # ! and it will start failing the day CPython learns to count honestly.
-    assert result > reported
-
-
-@pytest.mark.benchmark(group="04-structures-footprint")
-def test_footprint_slots_dataclass(benchmark):
-    """`__slots__` drops the per-instance dictionary."""
-
-    def kernel():
-        return _bytes_per_item(
-            lambda index: PointSlotsDataclass(float(index), float(index), True)
-        )
-
-    result = benchmark(kernel)
-    assert result > 0
+# ! Every record gets distinct field values on purpose. A factory returning
+# ! `PointDataclass(1.0, 2.0, True)` would share three float objects across all
+# ! ten thousand instances and understate every row by 80 bytes.
+LAYOUTS = {
+    "dict": lambda count: [
+        {"x": float(index), "y": float(index), "flag": True} for index in range(count)
+    ],
+    "class": lambda count: [
+        PointClass(float(index), float(index), True) for index in range(count)
+    ],
+    "dataclass": lambda count: [
+        PointDataclass(float(index), float(index), True) for index in range(count)
+    ],
+    "slots": lambda count: [
+        PointSlotsDataclass(float(index), float(index), True) for index in range(count)
+    ],
+    "namedtuple": lambda count: [
+        PointNamedtuple(float(index), float(index), True) for index in range(count)
+    ],
+    "tuple": lambda count: [
+        (float(index), float(index), True) for index in range(count)
+    ],
+    "numpy": _build_numpy,
+}
 
 
-@pytest.mark.benchmark(group="04-structures-footprint")
-def test_footprint_namedtuple(benchmark):
-    """A `namedtuple` is a tuple, so it pays no dictionary at all."""
-
-    def kernel():
-        return _bytes_per_item(
-            lambda index: PointNamedtuple(float(index), float(index), True)
-        )
-
-    result = benchmark(kernel)
-    assert result > 0
+# ! These are measurements, not benchmarks, so they take no `benchmark` fixture.
+# ! Timing them would report how long `tracemalloc` takes to watch ten thousand
+# ! allocations, which is not a number anybody wants.
+@pytest.mark.parametrize("layout", list(LAYOUTS))
+def test_footprint(layout, record_property):
+    """Bytes per record, obtained by allocating rather than by asking."""
+    measured = _bytes_per_record(LAYOUTS[layout])
+    record_property("bytes_per_record", round(measured, 1))
+    assert measured > 0
 
 
-@pytest.mark.benchmark(group="04-structures-footprint")
-def test_footprint_tuple(benchmark):
-    """A bare tuple — no field names, no class, no dictionary."""
-
-    def kernel():
-        return _bytes_per_item(lambda index: (float(index), float(index), True))
-
-    result = benchmark(kernel)
-    assert result > 0
-
-
-@pytest.mark.benchmark(group="04-structures-footprint")
-def test_footprint_class(benchmark):
-    """A hand-written class, for comparison with the generated dataclass."""
-
-    def kernel():
-        return _bytes_per_item(
-            lambda index: PointClass(float(index), float(index), True)
-        )
-
-    result = benchmark(kernel)
-    assert result > 0
+def test_footprint_getsizeof_under_reports():
+    """`sys.getsizeof` is shallow, and since 3.11 blind to the preheader."""
+    shallow = sys.getsizeof(PointDataclass(1.0, 2.0, True))
+    measured = _bytes_per_record(LAYOUTS["dataclass"])
+    record = (shallow, measured)
+    # ! This assert is the lesson, and it should start failing the day CPython
+    # ! learns to count its own inline values.
+    assert measured > 2 * shallow, record
 
 
-@pytest.mark.benchmark(group="04-structures-footprint")
-def test_footprint_numpy_structured(benchmark):
-    """One buffer for every point — no per-object header, no pointers."""
-    dtype = np.dtype([("x", np.float64), ("y", np.float64), ("flag", np.bool_)])
-
-    def kernel():
-        count = 10_000
-        gc.collect()
-        tracemalloc.start()
-        baseline, _ = tracemalloc.get_traced_memory()
-        points = np.zeros(count, dtype=dtype)
-        points["x"] = np.arange(count, dtype=np.float64)
-        points["y"] = np.arange(count, dtype=np.float64)
-        peak, _ = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-        assert points.shape == (count,)
-        return (peak - baseline) / count
-
-    result = benchmark(kernel)
-    assert result > 0
+# ? Intel Xeon 4 • CPython 3.14t • 10K records, distinct field values
+# ?
+# ?   NumPy structured      17.0 B    1.00x  one buffer, no headers
+# ?   __slots__ dataclass  144.6 B    8.49x  no instance dictionary
+# ?   tuple                160.5 B    9.43x
+# ?   namedtuple           168.6 B    9.90x  a tuple plus its class
+# ?   class                184.9 B   10.85x
+# ?   dataclass            184.9 B   10.85x  getsizeof claims 48
+# ?   dict                 272.5 B   16.01x  the fattest
+# ?
+# ? Two pieces of folklore die here. `sys.getsizeof` reports 48 bytes for a
+# ? dataclass instance that costs 185 — a 3.9x under-report. And `__slots__`
+# ? buys 1.28x, not the 2–3x usually quoted, because key-sharing dictionaries
+# ? and inline values had already captured most of that win before you asked.
+# ?
+# ? Free-threading is not free either: `sys.getsizeof(1.0)` is 40 bytes on
+# ? 3.14t against 24 on the GIL build of the same version, the extra being
+# ? header fields lock-free refcounting needs. Only small immutables grew.
 
 
-# ? Footprint is only half of the layout question. Array-of-Structs and
-# ? Struct-of-Arrays hold identical bytes; what differs is the stride you walk
-# ? when you touch one field.
+# ? Identical bytes can still be laid out two ways. Array-of-Structs keeps each
+# ? record's fields together, so walking one field steps over the others.
+# ? Struct-of-Arrays gives each field its own buffer.
+# ?
+# ?   AoS   x y f │ x y f │ x y f │ x y f      one field → stride 17
+# ?   SoA   x x x x │ y y y y │ f f f f        one field → stride 8
+# ?
+# ? A vectorized loop wants the second. The first is what you get by default
+# ? from a structured array, a list of objects, or a row-oriented database
+# ? driver — which is why columnar formats exist.
 
 
 @pytest.mark.benchmark(group="04-structures-footprint-access")
 def test_access_array_of_structs(benchmark):
     """Sum one field of a structured array — stride is the whole struct."""
-    dtype = np.dtype([("x", np.float64), ("y", np.float64), ("flag", np.bool_)])
-    points = np.zeros(1_000_000, dtype=dtype)
+    points = np.zeros(1_000_000, dtype=POINT_DTYPE)
     points["x"] = np.arange(1_000_000, dtype=np.float64)
 
     def kernel():
@@ -383,33 +380,7 @@ def test_access_struct_of_arrays(benchmark):
     assert result > 0
 
 
-# ? Intel Xeon 4 · CPython 3.14t · 10K instances, distinct field values
-# ?
-# ?   NumPy structured      17.0 B    1.00x  one buffer, no headers
-# ?   __slots__ dataclass  144.6 B    8.49x  no instance dictionary
-# ?   tuple                160.5 B    9.43x
-# ?   namedtuple           168.6 B    9.90x  a tuple plus its class
-# ?   class                184.9 B   10.85x
-# ?   dataclass            184.9 B   10.85x  getsizeof claims 48
-# ?   dict                 272.5 B   16.00x  the fattest
-# ?
-# ? Two pieces of folklore die here. `sys.getsizeof` reports 48 bytes for a
-# ? dataclass instance that costs 185, a 3.9x under-report, because since 3.11
-# ? the attribute values sit in an inline preheader it never walks. And
-# ? `__slots__` buys 1.28x, not the 2-3x usually quoted — key-sharing
-# ? dictionaries plus those inline values already captured most of that win.
-# ?
-# ? Measuring it is harder than it looks. Any recursive sizer that reads
-# ? `obj.__dict__` *materializes* the inline values into a real dictionary,
-# ? adding 64 B per instance — the tool changes what it measures. And a factory
-# ? returning `PointDataclass(1.0, 2.0, True)` shares three objects across all
-# ? ten thousand instances, understating every row by 80 B.
-# ?
-# ? Free-threading is not free either: `sys.getsizeof(1.0)` is 40 bytes on
-# ? 3.14t against 24 on the GIL build of the same version, the difference being
-# ? header fields lock-free refcounting needs. Only small immutables grew.
-# ?
-# ? Intel Xeon 4 · CPython 3.14t · summing one field of 1M elements
+# ? Intel Xeon 4 • CPython 3.14t • summing one field of 1M elements
 # ?
 # ?   struct-of-arrays      406 µs    1.00x  stride 8, contiguous
 # ?   array-of-structs    1'096 µs    2.70x  stride 17, neither
@@ -420,16 +391,17 @@ def test_access_struct_of_arrays(benchmark):
 
 # endregion: Object Footprint
 
-# region: Heterogeneous Data
+# region: Numeric Coercion
 
-# ? Python is a dynamically typed language, and it allows mixing different
-# ? types in a single collection. However, the performance of such collections
-# ? can vary significantly, depending on the types and their distribution.
+# ? Data arrives in whatever type its source happened to use: a form field is a
+# ? string, a currency column is a `Decimal`, a JSON body is an `int`. Summing
+# ? that pile means deciding, per element, what it is — and there are three
+# ? ways to decide, which differ by four orders of magnitude.
 # ?
-# ? Consider a common scenario: you receive numeric data from various sources
-# ? (user input as strings, database results as Decimals, API responses as ints)
-# ? and need to aggregate them. What's the fastest way to sum 80,000 values
-# ? when they come in 8 different representations of the same number?
+# ? Coerce everything and never ask. Ask first with `isinstance`. Or do not ask,
+# ? attempt the addition, and catch what fails. The last is the one Python
+# ? culture recommends, under the name EAFP, and it is the slowest by far
+# ? whenever failures are common rather than rare.
 
 
 from decimal import Decimal  # noqa: E402
@@ -457,7 +429,7 @@ def test_heterogeneous_sum(benchmark):
     values = seed * 10_000
 
     def kernel():
-        return sum(float(v) for v in values)
+        return sum(float(value) for value in values)
 
     result = benchmark(kernel)
     assert abs(result - 3.0 * len(values)) < 1e-9
@@ -471,11 +443,11 @@ def test_type_matching_sum(benchmark):
 
     def kernel():
         sum_value = 0.0
-        for v in values:
-            if isinstance(v, (int, float, np.integer, np.floating)):
-                sum_value += v
+        for value in values:
+            if isinstance(value, (int, float, np.integer, np.floating)):
+                sum_value += value
             else:
-                sum_value += float(v)
+                sum_value += float(value)
         return sum_value
 
     result = benchmark(kernel)
@@ -490,15 +462,47 @@ def test_try_except_sum(benchmark):
 
     def kernel():
         sum_value = 0.0
-        for v in values:
+        for value in values:
             try:
-                sum_value += v
+                sum_value += value
             except TypeError:
-                sum_value += float(v)
+                sum_value += float(value)
         return sum_value
 
     result = benchmark(kernel)
     assert abs(result - 3.0 * len(values)) < 1e-9
+
+
+# ? Intel Xeon 4 • CPython 3.14t • 80K values, eight representations
+# ?
+# ?   float() on everything   3'694 µs    1.00x  never asks
+# ?   isinstance dispatch    16'068 µs    4.35x  asks first
+# ?   try/except, EAFP       50'147 µs   13.58x  asks by failing
+# ?
+# ? EAFP costs 13.58x because three of the eight representations — `Decimal`
+# ? and the two strings — raise `TypeError` when added to a float. That is
+# ? 37.5% of the elements, and an exception is not a cheap branch. `Fraction`
+# ? is not among them: its `__radd__` accepts a float and returns one. Whether
+# ? EAFP is free or ruinous turns on details like that, which nobody can
+# ? predict by reading the list of type names.
+# ?
+# ? Asking first is worse than not asking. `isinstance` costs 4.35x more than
+# ? unconditional `float()` despite skipping the call for half the elements —
+# ? the tuple-of-types check is dearer than the call it avoids. An optimization
+# ? that inspects a value to decide whether to convert it must beat the
+# ? conversion, and the conversion here is one C call.
+
+
+# ? Three strategies for one problem, and all three accept the premise that the
+# ? data is mixed. The two benchmarks below reject it — same element count, one
+# ? type — to price what the premise costs:
+# ?
+# ?   sum(mixed)      per element: decide, then convert, then add
+# ?   sum(floats)     per element: add
+# ?   np.sum(array)   per element: add, in a C loop over a flat buffer
+# ?
+# ? A baseline that shares the workload but not the constraint is how you find
+# ? out whether you are optimizing a solution or removing a problem.
 
 
 @pytest.mark.benchmark(group="04-structures-coercion")
@@ -526,43 +530,39 @@ def test_homogeneous_container_sum(benchmark):
     assert abs(result - 3.0 * len(values)) < 1e-12
 
 
-# ? The results reveal a counter-intuitive hierarchy of approaches:
+# ? Intel Xeon 4 • CPython 3.14t • 80K values, same count both ways
 # ?
-# ? Intel Xeon 4 · CPython 3.14t · 80K values, eight representations
+# ?   np.sum, one dtype        17.7 µs      1.00x
+# ?   sum(), one dtype          273 µs     15.44x
+# ?   float() on everything   3'694 µs    208.69x  ← best mixed-data strategy
+# ?   isinstance dispatch    16'068 µs    907.67x
+# ?   try/except, EAFP       50'147 µs     2'833x
 # ?
-# ?   np.sum, homogeneous     17.7 µs      1.00x
-# ?   sum(), homogeneous       273 µs     15.44x
-# ?   float() on everything  3'694 µs    208.69x
-# ?   isinstance dispatch   16'068 µs    907.67x
-# ?   try/except, EAFP      50'147 µs     2'833x
+# ? The 208x between the best mixed row and the homogeneous list is the real
+# ? result, and it dwarfs the 13.58x separating the three strategies. Choosing
+# ? well among them is worth an order of magnitude; not needing to choose is
+# ? worth two.
 # ?
-# ? The "Easier to Ask Forgiveness than Permission" (EAFP) pattern, often
-# ? recommended in Python, is 19x slower than uniform coercion here! Why?
-# ? Because ≈25% of our values — Decimal, Fraction, strings — raise TypeError
-# ? when added to a float, and Python exceptions are expensive.
-# ?
-# ? Even more surprising: isinstance() checks are 3.3x slower than just
-# ? calling float() on everything, despite avoiding the call for 50% of
-# ? elements. The isinstance() overhead itself is more expensive than
-# ? the redundant float() calls it's trying to avoid.
-# ?
-# ? The lesson: if you must work with heterogeneous numeric data, convert
-# ? everything to a uniform type upfront. Better yet, ensure homogeneity
-# ? at the data ingestion layer — a numpy array is 247x faster than
-# ? iterating with float() coercion.
+# ? That is an argument about where the work happens, not how fast it is.
+# ? Coercing at ingestion converts each value once; coercing at use converts it
+# ? on every pass over the data.
 
 
-# ? Beyond numeric types, Python's string representation also has hidden costs.
-# ? PEP 393 introduced "flexible string representation" where the internal
-# ? encoding depends on the "widest" character in the string:
+# endregion: Numeric Coercion
+
+# region: Text Representation
+
+# ? A Python string has no fixed width per character. PEP 393 picks the
+# ? narrowest representation that fits the widest character present, and the
+# ? choice is made once for the whole string:
 # ?
-# ?   - ASCII-only (Latin-1): 1 byte per character
-# ?   - BMP Unicode (UCS-2): 2 bytes per character (chars up to U+FFFF)
-# ?   - Full Unicode (UCS-4): 4 bytes per character (emojis, rare scripts)
+# ?   "hello"          ASCII, 1 byte/char    ← every character below U+0080
+# ?   "héllo"          UCS-2, 2 bytes/char   ← one character forced the upgrade
+# ?   "héllo 🔥"       UCS-4, 4 bytes/char   ← one character forced it again
 # ?
-# ? A single emoji in an otherwise ASCII string causes the entire string to
-# ? use 4 bytes per character. This affects memory, but also operations like
-# ? substring search and hashing — critical for dict lookups.
+# ? Nothing is per-character about that decision. One emoji at the end of ten
+# ? thousand ASCII characters quadruples the whole buffer, because indexing has
+# ? to stay O(1) and that requires a uniform stride.
 
 
 def _make_ascii_string(length: int = 10_000) -> str:
@@ -578,10 +578,10 @@ def _make_emoji_string(length: int = 10_000) -> str:
 @pytest.mark.benchmark(group="04-structures-string-encodings")
 def test_string_encode_ascii(benchmark):
     """Encode ASCII string to UTF-8 bytes."""
-    s = _make_ascii_string(10_000)
+    text = _make_ascii_string(10_000)
 
     def kernel():
-        return s.encode("utf-8")
+        return text.encode("utf-8")
 
     result = benchmark(kernel)
     assert len(result) == 10_000  # 1 byte per char
@@ -590,96 +590,61 @@ def test_string_encode_ascii(benchmark):
 @pytest.mark.benchmark(group="04-structures-string-encodings")
 def test_string_encode_emoji(benchmark):
     """Encode emoji string to UTF-8 bytes — emojis become 4 bytes each."""
-    s = _make_emoji_string(10_000)
+    text = _make_emoji_string(10_000)
 
     def kernel():
-        return s.encode("utf-8")
+        return text.encode("utf-8")
 
     result = benchmark(kernel)
     assert len(result) > 10_000  # emojis expand to 4 bytes
 
 
-@pytest.mark.benchmark(group="04-structures-string-encodings")
-def test_string_join_ascii(benchmark):
-    """Join many ASCII strings."""
-    parts = ["a" * 100] * 100  # 100 strings of 100 chars
-
-    def kernel():
-        return "".join(parts)
-
-    result = benchmark(kernel)
-    assert len(result) == 10_000
-
-
-@pytest.mark.benchmark(group="04-structures-string-encodings")
-def test_string_join_emoji(benchmark):
-    """Join many emoji strings — must handle 4-byte chars."""
-    parts = [("a" * 9 + "\U0001f525") * 10] * 100  # 100 strings of 100 chars
-
-    def kernel():
-        return "".join(parts)
-
-    result = benchmark(kernel)
-    assert len(result) == 10_000
+def test_string_width_quadruples():
+    """One astral character sets the stride for every character in the string."""
+    ascii_text = _make_ascii_string(10_000)
+    emoji_text = _make_emoji_string(10_000)
+    assert len(ascii_text) == len(emoji_text)
+    narrow, wide = sys.getsizeof(ascii_text), sys.getsizeof(emoji_text)
+    # ! Same character count, four times the buffer. The emoji is 10% of the
+    # ! characters and 100% of the reason.
+    assert 3.9 < wide / narrow < 4.1, (narrow, wide)
 
 
-@pytest.mark.benchmark(group="04-structures-string-encodings")
-def test_string_hash_ascii(benchmark):
-    """Hash ASCII string — used in every dict lookup."""
-    s = _make_ascii_string(10_000)
-
-    def kernel():
-        return hash(s)
-
-    result = benchmark(kernel)
-    assert isinstance(result, int)
-
-
-@pytest.mark.benchmark(group="04-structures-string-encodings")
-def test_string_hash_emoji(benchmark):
-    """Hash emoji string — same length, different internal representation."""
-    s = _make_emoji_string(10_000)
-
-    def kernel():
-        return hash(s)
-
-    result = benchmark(kernel)
-    assert isinstance(result, int)
-
-
-# ? The memory difference is dramatic — 4x for the same logical content:
+# ? Intel Xeon 4 • CPython 3.14t • 10K characters, one emoji every tenth
 # ?
-# ? Intel Xeon 4 · CPython 3.14t · sys.getsizeof of the string object
+# ?   sys.getsizeof, ascii    10'057 B    1.00x    1.01 bytes per character
+# ?   sys.getsizeof, emoji    40'076 B    3.98x    4.01 bytes per character
 # ?
-# ?   ASCII, 10K chars    10'041 B    1.00x  1.00 bytes per character
-# ?   emoji, 10K chars    40'060 B    3.99x  4.01 bytes per character
+# ?   encode('utf-8'), ascii      211 ns    1.00x  memcpy, the widths agree
+# ?   encode('utf-8'), emoji    5'251 ns   24.89x  transcode, they do not
 # ?
-# ? Performance varies dramatically by operation:
+# ? Memory is the boring half. The interesting half is that UTF-8 encoding an
+# ? ASCII string is a `memcpy` — the internal representation and UTF-8 agree
+# ? byte for byte — while encoding the emoji string transcodes every character
+# ? from a 4-byte slot down to 1 to 4 UTF-8 bytes.
 # ?
-# ? Intel Xeon 4 · CPython 3.14t · 10K-character strings
-# ?
-# ?   hash(ascii)     68.9 ns     1.00x
-# ?   hash(emoji)      121 ns     1.76x
-# ?   encode(ascii)    211 ns     3.06x
-# ?   join(ascii)      444 ns     6.45x
-# ?   join(emoji)    1'304 ns    18.94x
-# ?   encode(emoji)  5'251 ns    76.25x
-# ?
-# ? The encode() operation shows the most dramatic difference — converting
-# ? a UCS-4 string to UTF-8 requires examining each 4-byte character and
-# ? encoding it as 1-4 bytes. For emojis specifically, each becomes 4 UTF-8
-# ? bytes. This 40x slowdown matters for serialization, file I/O, and
-# ? network protocols that use UTF-8.
+# ? So the cost is not "Unicode is slow". It is that one representation is
+# ? already the wire format and the other has to be converted to it, and which
+# ? one you have was decided by a single character you probably did not choose.
+# ? Serialization, logging and every socket write pay this.
 
+# endregion: Text Representation
 
-# ? Encoding is covered above; parsing is the other half of every text
-# ? pipeline. The folklore here is unusually wrong, so it is worth measuring
-# ? rather than repeating.
-# ?
+# region: Parsing
+
 # ? `re` caches compiled patterns in a dict keyed by pattern, flags and type,
-# ? which is why `re.split` feels almost as fast as a precompiled object. The
-# ? cache holds 512 entries. Exceed it — patterns built from user input, or
-# ? interpolated in a loop — and every single call recompiles.
+# ? which is why `re.split` feels nearly as fast as a precompiled object and
+# ? why precompiling is so often dismissed as premature.
+# ?
+# ? The cache holds 512 entries and, on overflow, is cleared entirely rather
+# ? than evicted from. Patterns interpolated from user input or loop variables
+# ? cross that line quietly:
+# ?
+# ?   ≤512 distinct patterns    lookup hits      ~1x
+# ?    >512 distinct patterns   cache clears     every call recompiles
+# ?
+# ? There is no warning and no gradual decay. The same code is fast in testing
+# ? with a handful of patterns and slow in production with thousands.
 
 import re  # noqa: E402
 import unicodedata  # noqa: E402
@@ -724,6 +689,17 @@ def test_parsing_re_split_precompiled(benchmark):
 
     result = benchmark(kernel)
     assert result == 8
+
+
+# ? Intel Xeon 4 • CPython 3.14t • splitting one 8-field line
+# ?
+# ?   str.split               400 ns    1.00x
+# ?   re.split precompiled    680 ns    1.70x
+# ?   re.split via cache    1'127 ns    2.82x  the lookup alone is 447 ns
+# ?
+# ? A dedicated delimiter split beats a regex that matches one literal
+# ? character, and the cache lookup — hashing the pattern string, checking
+# ? flags and type — costs more than the split it enables.
 
 
 @pytest.mark.benchmark(group="04-structures-parsing")
@@ -771,6 +747,17 @@ def test_parsing_cache_thrash_precompiled(benchmark):
     assert result == 1
 
 
+# ? Intel Xeon 4 • CPython 3.14t • 600 distinct patterns, 512-entry cache
+# ?
+# ?   precompiled            0.53 ms    1.00x
+# ?   via the re cache      13.22 ms   24.94x  past 512, every call misses
+# ?
+# ? This is a production failure mode rather than a tuning knob. Nothing warns
+# ? you, the degradation is not gradual, and the trigger — how many distinct
+# ? patterns your inputs generate — is usually not visible in the code that
+# ? pays for it.
+
+
 @pytest.mark.benchmark(group="04-structures-parsing")
 def test_parsing_translate(benchmark):
     """Stripping punctuation with a translation table."""
@@ -792,6 +779,19 @@ def test_parsing_re_sub(benchmark):
 
     result = benchmark(kernel)
     assert result > 0
+
+
+# ? Intel Xeon 4 • CPython 3.14t • rewriting 10K log lines
+# ?
+# ?   str.translate          1.51 ms    1.00x  one table lookup per character
+# ?   str.split              2.60 ms    1.72x
+# ?   re.sub(r"[,!;.]")      5.47 ms    3.62x
+# ?   re.split(r"\s+")      17.07 ms   11.30x  backtracking on every run
+# ?
+# ? `str.translate` wins because a translation table turns the whole operation
+# ? into an array index per character, with no matching at all. The gap between
+# ? the two `str` rows and their regex equivalents is the engine's per-character
+# ? bookkeeping, which is real work even when the pattern is trivial.
 
 
 @pytest.mark.benchmark(group="04-structures-parsing")
@@ -819,135 +819,68 @@ def test_parsing_timestamp_strptime(benchmark):
     assert result == 2026
 
 
-@pytest.mark.benchmark(group="04-structures-normalization")
-def test_normalize_nfkc(benchmark):
-    """NFKC folds compatibility characters — step one of corpus cleaning."""
-    text = _make_emoji_string(10_000) + "ﬁancé ½ Ⅳ ｆｕｌｌｗｉｄｔｈ"
+# ? One correctness note, since everything above measures only speed. Lowercase
+# ? is not the same operation as case-insensitive:
+# ?
+# ?   "Straße".lower()      → "straße"     never matches "strasse"
+# ?   "Straße".casefold()   → "strasse"    matches
+# ?
+# ? `str.lower` maps each character to its lowercase form, and ß is already
+# ? lowercase. `str.casefold` applies the Unicode folding that expands it to
+# ? "ss". Measured on 10K characters they are within 4% of each other — 32.0 µs
+# ? against 30.7 µs — so one of these is simply wrong for search and free to
+# ? replace.
 
-    def kernel():
-        return len(unicodedata.normalize("NFKC", text))
 
-    result = benchmark(kernel)
-    assert result > 0
-
-
-@pytest.mark.benchmark(group="04-structures-normalization")
-def test_normalize_casefold_search(benchmark):
+# ! A correctness demonstration, not a benchmark — the two spellings cost the
+# ! same, so there is no timing worth publishing and none is taken.
+def test_normalize_casefold_search():
     """Case-insensitive matching the way most code does it, and gets wrong."""
     haystack = _make_ascii_string(10_000) + "Straße"
-
-    def kernel():
-        return haystack.lower().find("strasse")
-
-    result = benchmark(kernel)
-    # ! `str.lower` maps ß to ß, not ss, so this search fails. `casefold` is
-    # ! the correct primitive — 'Straße'.casefold() == 'strasse'.
-    assert result == -1
-    assert "Straße".casefold() == "strasse"
+    assert haystack.lower().find("strasse") == -1
+    assert haystack.casefold().find("strasse") != -1
 
 
-# ? Intel Xeon 4 · CPython 3.14t · splitting one 8-field line
-# ?
-# ?   str.split               400 ns    1.00x
-# ?   re.split precompiled    680 ns    1.70x
-# ?   re.split via cache    1'127 ns    2.82x  the lookup alone is 447 ns
-# ?
-# ? Intel Xeon 4 · CPython 3.14t · parsing one ISO timestamp
+# ? Intel Xeon 4 • CPython 3.14t • parsing one ISO timestamp
 # ?
 # ?   datetime.fromisoformat  492 ns    1.00x  C fast path since 3.11
 # ?   datetime.strptime     8'249 ns   16.77x  re-reads the format string
 # ?
-# ? Intel Xeon 4 · CPython 3.14t · rewriting 10K log lines
+# ? `strptime` re-parses `"%Y-%m-%dT%H:%M:%S.%f"` on every call — the format
+# ? string is data, interpreted each time — while `fromisoformat` hard-codes
+# ? one grammar in C. Sixteen times, for knowing the answer in advance.
+
+
+# ? The `re.compile` win is fixed per-call overhead rather
+# ? than throughput — so it shrinks as the input grows:
 # ?
-# ?   str.translate          1.51 ms    1.00x
-# ?   str.split              2.60 ms    1.72x
-# ?   re.sub(r"[,!;.]")      5.47 ms    3.62x
-# ?   re.split(r"\s+")      17.07 ms   11.30x
+# ? Intel Xeon 4 • CPython 3.14t • timeit, splitting one line on commas
 # ?
-# ? Intel Xeon 4 · CPython 3.14t · 600 distinct patterns, 512-entry cache
+# ?                        8 fields    10'000 fields
+# ?   str.split             101.9 ns        325.7 µs
+# ?   precompiled           347.6 ns        357.9 µs
+# ?   via the re cache      820.9 ns        371.4 µs
 # ?
-# ?   precompiled            0.53 ms    1.00x
-# ?   via the re cache      13.22 ms   24.94x  past 512, every call misses
+# ?   precompiled leads        2.36x           1.04x
+# ?   str.split leads          3.41x           1.10x
 # ?
-# ? That last pair is a production failure mode rather than a tuning knob:
-# ? patterns interpolated in a loop or built from user input silently turn
-# ? every call into a recompile, and nothing warns you.
-# ?
-# ? The `re.compile` win elsewhere is fixed per-call overhead, not throughput.
-# ? On 8 fields precompiling leads by 2.14x; at 10'000 fields the two are
-# ? identical and `str.split` leads a regex by only 1.21x. Benchmark a single
-# ? input size and you will publish a constant that is not one.
-# ?
-# ? One correctness note, since this chapter measures only speed: `str.lower`
-# ? leaves ß alone, so lowercase matching never finds "strasse" in "Straße".
-# ? `str.casefold` is the primitive that does.
+# ? Every ranking here survives, and every ratio collapses. Precompiling is
+# ? worth 2.36x on short inputs and nothing at all on long ones, because the
+# ? cost it removes is paid once per call rather than once per character.
+# ? Measure at one input size and you publish a constant that is not one.
 
-
-# ? The Numeric Types chapter showed which dtypes BLAS has kernels for. It
-# ? also wants contiguous memory — C-order or Fortran-order — and a strided
-# ? view like `arr[::2]` disqualifies an operand no matter how good its dtype.
-
-
-@pytest.mark.benchmark(group="04-structures-layouts")
-def test_layouts_sum_contiguous(benchmark):
-    """Sum of C-contiguous array — optimal memory access pattern."""
-    size = 1_000_000
-    arr = np.arange(size, dtype=np.float64)
-
-    def kernel():
-        return np.sum(arr)
-
-    result = benchmark(kernel)
-    benchmark.extra_info["contiguous"] = arr.flags["C_CONTIGUOUS"]
-    assert result > 0
-
-
-@pytest.mark.benchmark(group="04-structures-layouts")
-def test_layouts_matmul_strided(benchmark):
-    """Matmul with strided input — forces internal copy or slow path."""
-    size = 200
-    rng = np.random.default_rng(42)
-    # Create strided views by slicing every other row/column
-    A_full = rng.random((size * 2, size * 2))
-    B_full = rng.random((size * 2, size * 2))
-    A = A_full[::2, ::2]  # strided view
-    B = B_full[::2, ::2]
-
-    def kernel():
-        return A @ B
-
-    result = benchmark(kernel)
-    benchmark.extra_info["A_contiguous"] = A.flags["C_CONTIGUOUS"]
-    assert result.shape == (size, size)
-
-
-# ? The dtype impact on matrix multiplication (200×200) is substantial:
-# ?
-# ? A strided view cannot be handed to BLAS at all, so `matmul` falls back to
-# ? the same generic loop that makes float16 slow:
-# ?
-# ? Intel Xeon 4 · CPython 3.14t · same 200×200 matmul, best of five
-# ?
-# ?   float32 contiguous    38.4 µs    1.00x  BLAS
-# ?   float32 strided        174 µs    4.54x  no BLAS
-# ?
-# ? Two conditions get you the fast path: a dtype BLAS implements, and
-# ? contiguous memory. Miss either and the fallback loop is waiting.
-# ?
-# ? Best of five runs, and it needs to be — BLAS timings swung 12x between
-# ? consecutive runs on this shared machine, because multithreaded kernels
-# ? compete for cores while the fallback loop does not.
-
-
-# endregion: Heterogeneous Data
+# endregion: Parsing
 
 # region: Tables and Arrays
 
-# ? Tabular data processing is central to data science and analytics.
-# ? NumPy, Pandas, and PyArrow each offer different trade-offs for
-# ? filtering and aggregating data. NumPy is fastest for simple numeric
-# ? operations, but Pandas and PyArrow add convenience and handle
-# ? mixed types better.
+# ? Filter a column, then sum what survives. Three libraries, one workload,
+# ? and the interesting part is not which wins but that the answer has an
+# ? expiry date — the ranking below inverted across a Pandas major version.
+# ?
+# ? The three differ in where the filtered rows go. A NumPy boolean mask
+# ? materializes a new array of the survivors before summing. PyArrow's
+# ? compute kernels fuse the filter into the reduction and never build it.
+# ? Pandas sits between, and which side it sits closer to is a version detail.
 
 
 @pytest.mark.benchmark(group="04-structures-tables")
@@ -1000,13 +933,13 @@ def test_tables_pyarrow_filter_sum(benchmark):
     assert result >= 0.0
 
 
-# ? Apple M2 Pro · Pandas 2.2 · 100K rows, filter even labels then sum
+# ? Apple M2 Pro • Pandas 2.2 • 100K rows, filter even labels then sum
 # ?
 # ?   PyArrow compute    355 µs    1.00x  columnar kernels win
 # ?   Pandas DataFrame   386 µs    1.09x  close behind, more features
 # ?   NumPy mask         634 µs    1.79x  surprisingly slower
 # ?
-# ? Intel Xeon 4 · Pandas 3.0 · same workload
+# ? Intel Xeon 4 • Pandas 3.0 • same workload
 # ?
 # ?   PyArrow compute    651 µs    1.00x  still wins
 # ?   NumPy mask         862 µs    1.32x  now ahead of Pandas

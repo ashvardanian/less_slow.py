@@ -3,55 +3,78 @@
 
 """Abstractions — the price of each way to express the same pipeline.
 
-The same computation written five ways: explicit callbacks, generators,
-a custom iterator class, polymorphic stages behind a base class, and async
-generators. In C++ and Rust these collapse to roughly the same machine code
-and the zero-cost claim holds. In Python they do not: callbacks are fastest,
-async generators are nearly 5x slower, and the iterator protocol's per-item
-`__next__` call is a real tax.
+One computation written six ways: a fused loop with no stages, callbacks,
+generators, a hand-written iterator class, eager stages behind a base class,
+and async generators. In C++ and Rust these collapse to nearly the same
+machine code and the zero-cost claim earns its name. In Python the cheapest
+way to have stages at all costs 1.35x over the fused loop, and the spread
+across the rest is 2.4x.
 
-So the abstraction you reach for is a performance decision here in a way it
-is not in a compiled language, and the ordering is worth remembering because
-it is the opposite of what the sibling repositories measure.
+Two of the numbers are traps. Half the cost of the async row is building an
+event loop, not running the pipeline — `asyncio.run` inside a timed region
+measures loop construction, which is where the widely-repeated "async is 5x
+slower" comes from. And accumulating with `reduce` over a `(sum, count)` pair
+allocates a tuple per item, which indicts the accumulator rather than the
+generators it is attached to.
+
+The honest ranking, once both are controlled: the iterator protocol is the
+expensive abstraction at 1.66x over generators, and the scheduler is the
+expensive one at 2.24x.
 """
+
 import pytest
 
 # region: Pipelines and Abstractions
 
-# ? Designing efficient micro-kernels is hard, but composing them into
-# ? high-level pipelines without losing performance is just as difficult.
+# ? One computation, six ways to write it. Take the integers 3 through 49,
+# ? drop the powers of two and the powers of three, expand what remains into
+# ? prime factors, and sum them. Eighty-four factors come out the other end
+# ? however it is expressed.
 # ?
-# ? Consider a hypothetical numeric processing pipeline:
+# ? What differs is where the values live between stages:
 # ?
-# ?   1. Generate all integers in a given range (e.g., [1, 49]).
-# ?   2. Filter out integers that are perfect squares.
-# ?   3. Expand each remaining number into its prime factors.
-# ?   4. Sum all prime factors from the filtered numbers.
+# ?   fused        one loop, no stages          nothing crosses a boundary
+# ?   callbacks    push: stage calls the next   one call per item
+# ?   generators   pull: caller drives          one resume per item
+# ?   iterator     pull, via __next__           one method call per item
+# ?   eager        each stage builds a list     one full list per stage
+# ?   async        pull, through an event loop  one scheduler turn per item
 # ?
-# ? We'll explore four implementations of this pipeline:
-# ?
-# ?  - __Callback-based__ pipeline using lambdas,
-# ?  - __Generators__, `yield`-ing values at each stage,
-# ?  - __Range-based__ pipeline using a custom `PrimeFactors` iterator,
-# ?  - __Polymorphic__ pipeline with a shared base class,
-# ?  - __Async Generators__ with `async for` loops.
+# ? In C++ and Rust these collapse to nearly the same machine code, and the
+# ? zero-cost claim earns its name. In Python every arrow in that column is a
+# ? real interpreter operation, so the shape of the pipeline is a performance
+# ? decision rather than a stylistic one.
 
 PIPE_START = 3
 PIPE_END = 49
 
 
-def is_power_of_two(x: int) -> bool:
-    """Return True if x is a power of two, False otherwise."""
-    return x > 0 and (x & (x - 1)) == 0
+def is_power_of_two(value: int) -> bool:
+    """Return True if `value` is a power of two."""
+    return value > 0 and (value & (value - 1)) == 0
 
 
-def is_power_of_three(x: int) -> bool:
-    """Return True if x is a power of three, False otherwise."""
-    MAX_POWER_OF_THREE = 12157665459056928801
-    return x > 0 and (MAX_POWER_OF_THREE % x == 0)
+# ! The largest power of three that fits in 64 bits. Every power of three
+# ! divides it and nothing else in `[3, 49]` does, so one modulo replaces a
+# ! division loop — the trick only holds because the range is bounded.
+MAX_POWER_OF_THREE = 12157665459056928801
+
+
+def is_power_of_three(value: int) -> bool:
+    """Return True if `value` divides the largest 64-bit power of three."""
+    return value > 0 and (MAX_POWER_OF_THREE % value == 0)
 
 
 # region: Callbacks
+
+# ? The push model. A producer computes a value and calls a function with it;
+# ? nothing is stored, nothing is suspended, and control never returns to a
+# ? driver in between. The accumulator is a closure over two locals.
+# ?
+# ? This is the cheapest composition Python offers that still has stages,
+# ? because a call is the only mechanism involved. What it costs is control:
+# ? the producer decides when to stop, the consumer cannot pause, and there is
+# ? no value to hand to something else halfway through.
 
 from typing import Callable, Tuple  # noqa: E402
 
@@ -86,6 +109,17 @@ def pipeline_callbacks() -> Tuple[int, int]:
 # endregion: Callbacks
 
 # region: Generators
+
+# ? The pull model. `yield` suspends the producer with its locals intact and
+# ? returns to the caller, who resumes it when the next value is wanted. The
+# ? stages compose as objects — `filter`, `map`, `chain` — so the pipeline can
+# ? be assembled, passed around, and consumed by someone else.
+# ?
+# ? A resume is more work than a call, since the frame has to be reactivated
+# ? rather than created, and the cost lands per item. Two accumulators are
+# ? measured over the identical front end to keep that separate from how the
+# ? results are summed.
+
 from typing import Generator  # noqa: E402
 from functools import reduce  # noqa: E402
 from itertools import chain  # noqa: E402
@@ -102,26 +136,48 @@ def prime_factors_generator(number: int) -> Generator[int, None, None]:
             factor += 1 if factor == 2 else 2
 
 
-def pipeline_generators() -> Tuple[int, int]:
+def _lazy_factors():
+    """The shared lazy front end: range → two filters → flattened factors."""
     values = range(PIPE_START, PIPE_END + 1)
-    values = filter(lambda x: not is_power_of_two(x), values)
-    values = filter(lambda x: not is_power_of_three(x), values)
+    values = filter(lambda value: not is_power_of_two(value), values)
+    values = filter(lambda value: not is_power_of_three(value), values)
+    return chain.from_iterable(map(prime_factors_generator, values))
 
-    values_factors = map(prime_factors_generator, values)
-    all_factors = chain.from_iterable(values_factors)
 
-    # Use `reduce` to do a single-pass accumulation of (sum, count)
-    sum_factors, count = reduce(
-        lambda acc, factor: (acc[0] + factor, acc[1] + 1),
-        all_factors,
+def pipeline_generators() -> Tuple[int, int]:
+    sum_factors = 0
+    count = 0
+    for factor in _lazy_factors():
+        sum_factors += factor
+        count += 1
+    return sum_factors, count
+
+
+def pipeline_generators_reduce() -> Tuple[int, int]:
+    """The same pipeline accumulated with `reduce` over a `(sum, count)` pair."""
+    # ! This allocates a tuple per factor where the loop above allocates none,
+    # ! so the pair is a comparison of accumulators, not of generators.
+    return reduce(
+        lambda carried, factor: (carried[0] + factor, carried[1] + 1),
+        _lazy_factors(),
         (0, 0),
     )
-    return sum_factors, count
 
 
 # endregion: Generators
 
 # region: Iterators
+
+# ? The same pull semantics, written by hand. A class with `__iter__` and
+# ? `__next__` does what a generator does, with the suspended state kept in
+# ? attributes instead of a frame:
+# ?
+# ?   generator     state in the frame       resume, then yield
+# ?   iterator      state in self.number     attribute load, store, return
+# ?
+# ? Every item now costs a Python-level method call plus attribute traffic,
+# ? where the generator costs a frame resume. This is the one shape that C++
+# ? and Rust programmers reach for by habit and that Python punishes hardest.
 
 
 class PrimeFactors:
@@ -159,7 +215,20 @@ def pipeline_iterators() -> Tuple[int, int]:
 
 # endregion: Iterators
 
-# region: Polymorphic
+# region: Eager Stages
+
+# ? Stages behind an abstract base class, each rewriting the whole list before
+# ? the next one runs. This is the shape a C++ programmer writes with virtual
+# ? `process` methods, and the name usually attached to it is "dynamic
+# ? dispatch" — which is not what it measures. Four `stage.process(data)` calls
+# ? cannot show dispatch cost against a pipeline that processes eighty-four
+# ? items.
+# ?
+# ? What it does measure is materialization: `data[:] = [...]` builds a
+# ? complete list at every stage, so peak memory is the largest intermediate
+# ? rather than one item, and nothing can be consumed until everything is
+# ? ready. That is the real trade against the lazy shapes above.
+
 from typing import List  # noqa: E402
 from abc import ABC, abstractmethod  # noqa: E402
 
@@ -198,9 +267,11 @@ class PrimeFactorsStage(PipelineStage):
 
     def process(self, data: List[int]) -> None:
         result = []
-        for val in data:
-            # Use the generator-based prime factors
-            result.extend(PrimeFactors(val))
+        for value in data:
+            # ! The generator, not the `PrimeFactors` class — otherwise this
+            # ! pipeline would carry the iterator protocol's cost too, and the
+            # ! two rows could not be told apart.
+            result.extend(prime_factors_generator(value))
         data[:] = result
 
 
@@ -219,9 +290,23 @@ def pipeline_dynamic_dispatch() -> Tuple[int, int]:
     return sum(data), len(data)
 
 
-# endregion: Polymorphic
+# endregion: Eager Stages
 
 # region: Async Generators
+
+# ? The pull model again, with a scheduler in the middle. `async for` suspends
+# ? into an event loop rather than straight back to the caller, so each item
+# ? costs a resume plus a trip through the loop's ready queue.
+# ?
+# ? This buys nothing here — the pipeline never waits on anything — and that is
+# ? deliberate. It prices the machinery on a workload with no I/O to overlap,
+# ? which is what an `async` pipeline degenerates to when its stages turn out
+# ? to be CPU-bound.
+# ?
+# ? Two variants, because where the loop comes from dominates the answer:
+# ?
+# ?   asyncio.run(...)         builds a loop, runs, tears it down
+# ?   loop.run_until_complete  reuses a loop that already exists
 
 import asyncio  # noqa: E402
 from typing import AsyncGenerator  # noqa: E402
@@ -264,8 +349,55 @@ async def pipeline_async() -> Tuple[int, int]:
 
 # endregion: Async Generators
 
+# region: No Abstraction At All
+
+# ? Everything above has stages. This has none: the two predicates are inlined
+# ? as expressions, the factorization is the body of the same loop, and no
+# ? value is ever handed from one named thing to another.
+# ?
+# ? It is unpleasant to read, impossible to reuse, and it is the only honest
+# ? baseline. Without it, "callbacks are fastest" means fastest among the
+# ? abstractions, which quietly assumes the answer to the question actually
+# ? being asked — what does structuring this cost at all?
+
+
+def pipeline_fused() -> Tuple[int, int]:
+    """Every stage inlined into one loop — the floor these are measured against."""
+    sum_factors = 0
+    count = 0
+    for value in range(PIPE_START, PIPE_END + 1):
+        if value > 0 and (value & (value - 1)) == 0:
+            continue
+        if value > 0 and MAX_POWER_OF_THREE % value == 0:
+            continue
+        number = value
+        factor = 2
+        while number > 1:
+            if number % factor == 0:
+                sum_factors += factor
+                count += 1
+                number //= factor
+            else:
+                factor += 1 if factor == 2 else 2
+    return sum_factors, count
+
+
+# endregion: No Abstraction At All
+
+# ? Every implementation asserts against the same pair, which is the only
+# ? guard that keeps this a comparison. Six pipelines that produce different
+# ? answers are six different programs, and the fastest of them would be
+# ? whichever one does the least work rather than whichever composes best.
+
 PIPE_EXPECTED_SUM = 645  # sum of prime factors from the final data
 PIPE_EXPECTED_COUNT = 84  # total prime factors from the final data
+
+
+@pytest.mark.benchmark(group="05-abstractions-pipelines")
+def test_pipeline_fused(benchmark):
+    """No stages, no boundaries — the floor every other row is measured against."""
+    result = benchmark(pipeline_fused)
+    assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
 
 
 @pytest.mark.benchmark(group="05-abstractions-pipelines")
@@ -293,27 +425,84 @@ def test_pipeline_dynamic_dispatch(benchmark):
     assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
 
 
+@pytest.fixture(scope="module")
+def run_on_shared_loop():
+    """One event loop for the whole module, created once and reused."""
+    loop = asyncio.new_event_loop()
+    try:
+        yield loop.run_until_complete
+    finally:
+        loop.close()
+
+
 @pytest.mark.benchmark(group="05-abstractions-pipelines")
-def test_pipeline_async(benchmark):
-    """Benchmark the async-generators pipeline."""
-    run_async = lambda: asyncio.run(pipeline_async())  # noqa: E731
-    result = benchmark(run_async)
+def test_pipeline_async(benchmark, run_on_shared_loop):
+    """Async generators on an already-running loop — the pipeline alone."""
+    result = benchmark(lambda: run_on_shared_loop(pipeline_async()))
     assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
 
 
-# ? The results, as expected, are much slower than in similar pipelines
-# ? written in C++ or Rust. However, the iterators, don't seem like a
-# ? good design choice in Python!
+@pytest.mark.benchmark(group="05-abstractions-pipelines")
+def test_pipeline_async_run(benchmark):
+    """The same pipeline through `asyncio.run`, which builds a loop per call."""
+    result = benchmark(lambda: asyncio.run(pipeline_async()))
+    assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
+
+
+@pytest.mark.benchmark(group="05-abstractions-pipelines")
+def test_pipeline_generators_reduce(benchmark):
+    """The generator pipeline with a `reduce` accumulator instead of a loop."""
+    result = benchmark(pipeline_generators_reduce)
+    assert result == (PIPE_EXPECTED_SUM, PIPE_EXPECTED_COUNT)
+
+
+# ? Intel Xeon 4 • CPython 3.14t • timeit, integers 3..49 factored and summed
 # ?
-# ? Intel Xeon 4 · CPython 3.14t · integers 3..49, factored and summed
+# ?   fused loop            15.8 µs    1.00x  no stages at all
+# ?   callbacks             21.4 µs    1.35x
+# ?   eager stages          23.0 µs    1.45x
+# ?   generators            23.1 µs    1.46x
+# ?   generators + reduce   26.1 µs    1.65x
+# ?   iterator class        38.4 µs    2.43x
+# ?   async, shared loop    51.7 µs    3.27x
+# ?   async, asyncio.run   102.3 µs    6.47x
 # ?
-# ?   callbacks    19.8 µs    1.00x
-# ?   generators   23.7 µs    1.20x
-# ?   iterators    35.2 µs    1.78x
-# ?   polymorphic  37.3 µs    1.89x
-# ?   async        93.1 µs    4.71x
+# ? Abstraction costs 1.35x at the cheapest. That is the number worth carrying
+# ? away, because it is the price of having stages at all — the fused loop is
+# ? not a style anyone should write, and everything above it is paying for the
+# ? ability to name and recombine the pieces.
+
+
+# ? Two of those rows are traps rather than findings, and both are the kind a
+# ? benchmark introduces by accident:
 # ?
-# ? For comparison, a fast C++/Rust implementation would take 200ns,
-# ? or __84x__ faster than the fastest Python implementation here.
+# ? Intel Xeon 4 • CPython 3.14t • what each comparison actually isolates
+# ?
+# ?   async, shared loop vs generators     2.24x   the scheduler
+# ?   asyncio.run vs shared loop           1.98x   loop construction
+# ?   iterator class vs generators         1.66x   __next__ over frame resume
+# ?   reduce vs for loop                   1.13x   the tuple per item
+# ?
+# ? Half the `asyncio.run` figure — 50.6 µs of 102.3 — is building and tearing
+# ? down an event loop rather than running anything. Time `asyncio.run` inside
+# ? a benchmark and that setup is what you publish. The widely repeated "async
+# ? generators are 5x slower" is mostly this.
+# ?
+# ? The `reduce` row indicts its accumulator, not its generators: carrying
+# ? `(sum, count)` allocates a tuple per factor where a plain `for` allocates
+# ? none. Both traps have the same shape — something outside the thing being
+# ? compared varies along with it.
+
+
+# ? Eager stages land at 1.45x, indistinguishable from generators, so
+# ? materializing a list per stage costs nothing at this size — and would cost
+# ? everything at a size that does not fit in memory. The lazy shapes are not
+# ? faster than the eager one here; they are bounded, which is a property that
+# ? does not show up in a table of one input size.
+# ?
+# ? A C++ or Rust version runs in roughly 200 ns, 79x the fused Python loop.
+# ? Their equivalents of every row above would collapse onto that one number.
+# ? That is what "zero-cost abstraction" means, and why this ranking has no
+# ? counterpart there — the choice is free, so nobody measures it.
 
 # endregion: Pipelines and Abstractions
