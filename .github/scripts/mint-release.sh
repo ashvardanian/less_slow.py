@@ -13,7 +13,6 @@ export version
 echo "$version" > VERSION
 perl -pi -e 's/^version = "[^"]+"$/version = "$ENV{version}"/' pyproject.toml
 perl -0pi -e 's/^(name = "less-slow"\nversion = )"[^"]+"$/$1"$ENV{version}"/m' uv.lock
-perl -pi -e 's/^version: .+$/version: $ENV{version}/' CITATION.cff
 git commit -am "Release: v$version"
 .github/scripts/check-release.sh "v$version" # no hooks here, so this is what catches a missed site
 git tag -a "v$version" -m "Release: v$version"

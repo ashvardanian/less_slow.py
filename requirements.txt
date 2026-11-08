@@ -23,10 +23,6 @@ colorama==0.4.6 ; sys_platform == 'win32'
     # via
     #   click
     #   pytest
-exceptiongroup==1.3.1 ; python_full_version < '3.11'
-    # via
-    #   anyio
-    #   pytest
 fastapi==0.140.0
     # via less-slow
 h11==0.16.0
@@ -44,31 +40,18 @@ idna==3.18
     #   requests
 iniconfig==2.3.0
     # via pytest
-llvmlite==0.48.0
-    # via numba
 ml-dtypes==0.5.4
-    # via less-slow
-numba==0.66.0
     # via less-slow
 numkong==7.7.0
     # via less-slow
-numpy==2.2.6 ; python_full_version < '3.11'
+numpy==2.4.6
     # via
     #   less-slow
     #   ml-dtypes
-    #   numba
-    #   pandas
-numpy==2.4.6 ; python_full_version >= '3.11'
-    # via
-    #   less-slow
-    #   ml-dtypes
-    #   numba
     #   pandas
 packaging==26.2
     # via pytest
-pandas==2.3.3 ; python_full_version < '3.11'
-    # via less-slow
-pandas==3.0.5 ; python_full_version >= '3.11'
+pandas==3.0.5
     # via less-slow
 pluggy==1.6.0
     # via pytest
@@ -92,31 +75,25 @@ pytest-benchmark==5.2.3
     # via less-slow
 python-dateutil==2.9.0.post0
     # via pandas
-pytz==2026.3.post1 ; python_full_version < '3.11'
-    # via pandas
 requests==2.34.2
     # via less-slow
 six==1.17.0
     # via python-dateutil
 starlette==1.3.1
     # via fastapi
-tomli==2.4.1 ; python_full_version < '3.11'
-    # via pytest
 typing-extensions==4.16.0
     # via
     #   anyio
-    #   exceptiongroup
     #   fastapi
     #   pydantic
     #   pydantic-core
     #   starlette
     #   typing-inspection
-    #   uvicorn
 typing-inspection==0.4.2
     # via
     #   fastapi
     #   pydantic
-tzdata==2026.3 ; python_full_version < '3.11' or sys_platform == 'emscripten' or sys_platform == 'win32'
+tzdata==2026.3 ; sys_platform == 'emscripten' or sys_platform == 'win32'
     # via pandas
 urllib3==2.7.0
     # via requests

@@ -7,7 +7,6 @@ dependencies = [
   "pytest",
   "pytest-benchmark>=5.2.3", # Numerics and low-precision types
   "numpy",
-  "numba",
   "ml-dtypes", # NumPy-native fp8 and bfloat16 dtypes
   "numkong", # SIMD kernels for the types NumPy lacks
   # Composite structures and validation
@@ -21,10 +20,11 @@ dependencies = [
   "httpx", # Alternative HTTP client
 ]
 description = "Microbenchmarks for a performance-first mindset in Python"
-license = {file = "LICENSE"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 name = "less_slow"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 version = "1.0.0"
 
 [project.optional-dependencies]
@@ -32,6 +32,8 @@ version = "1.0.0"
 # pulls roughly 2.9 GB of CUDA libraries - five times the rest of the install
 # - while every other dependency here is smaller than pandas.
 cuda = ["nvmath-python[cu12]>=1.0.0"]
+# Optional because `uv sync` skips it by default: `uv run --extra numba pytest`.
+numba = ["numba"]
 
 [project.urls]
 Citation = "https://doi.org/10.5281/zenodo.21626661"
@@ -46,6 +48,9 @@ addopts = "-ra -q"
 minversion = "6.0"
 python_files = "less_slow_[0-9][0-9]_*.py"
 
+[tool.uv]
+package = false
+
 [build-system]
 build-backend = "setuptools.build_meta"
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=77", "wheel"]

@@ -42,7 +42,7 @@ less_slow_05_abstractions.py   less_slow_10_networking.py
 
 Read them in order, or jump to whichever chapter you are most curious about.
 
-## Reproducing the Benchmarks
+## Running the Benchmarks
 
 If you are familiar with Python and want to review code and measurements as you read, you can clone the repository and execute the following commands to install the dependencies and run the benchmarks in your local environment.
 
@@ -63,7 +63,7 @@ uv run pytest -ra -q             # Run all benchmarks
 ```
 
 `.python-version` pins `3.14t`, the free-threaded build — `requires-python` can only state a version range and has no way to name the no-GIL ABI, so without the pin `uv` picks the GIL build.
-Pass `--python="3.14"` to compare the two; the suite passes on 3.10 through 3.14, free-threaded or not.
+Pass `--python="3.14"` to compare the two. `pyarrow` and `numba` have no 3.15t wheels yet, so free-threaded runs stay on 3.14t.
 
 For `pytest`, the `-r` flag can be used to display a "short test summary info" at the end of the test session, making it easy to get a clear picture of all failures in large test suites.
 The `-ra` variant limits the summary only to failed tests, avoiding "passed" and "passed with outputs" messages.
@@ -84,8 +84,8 @@ If this repository helps your research, teaching, or product, please cite it:
 ```bibtex
 @software{Vardanian_less_slow_py,
   author = {Vardanian, Ash},
-  title = {{less_slow.py: Less Slow Coding Practices in Python}},
-  doi = {10.5281/zenodo.21626661},
+  title = {{less_slow.py: Measuring the Real Cost of Abstractions in Python}},
+  doi = {10.5281/zenodo.21626660},
   url = {https://github.com/ashvardanian/less_slow.py},
   license = {Apache-2.0}
 }

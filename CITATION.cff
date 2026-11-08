@@ -1,12 +1,11 @@
 cff-version: 1.2.0
-title: "less_slow.py: Less Slow Coding Practices in Python, from Numerics & NumPy to Generators, Async IO, & Networking"
+title: "less_slow.py: Measuring the Real Cost of Abstractions in Python"
 message: "If you use this software, please cite it as below."
 type: software
 license: Apache-2.0
-version: 1.0.0
 repository-code: https://github.com/ashvardanian/less_slow.py
 url: https://ashvardanian.com/tags/less-slow/
-doi: 10.5281/zenodo.21626661
+doi: 10.5281/zenodo.21626660
 abstract: >-
   Educational micro-benchmarks for building a performance-first mindset in
   Python, measuring the real cost of abstractions from a few nanoseconds
@@ -18,16 +17,9 @@ abstract: >-
   memory, garbage collection, and allocation behavior, error handling with
   exceptions versus status codes, reflection and dynamic code generation,
   plus networking with sockets, HTTPX, FastAPI, and Uvicorn.
-
-authors:
-  - family-names: Vardanian
-    given-names: Ash
-    alias: ashvardanian
-    orcid: https://orcid.org/0000-0002-4882-1815
-
 keywords:
   - benchmarking
-  - performance-engineering
+  - performance engineering
   - python
   - numpy
   - numba
@@ -35,19 +27,25 @@ keywords:
   - arrow
   - pydantic
   - asyncio
-  - free-threading
+  - free threading
   - pytest-benchmark
+
+authors:
+  - family-names: Vardanian
+    given-names: Ash
+    alias: ashvardanian
+    orcid: https://orcid.org/0000-0002-4882-1815
 
 references:
   - type: software
-    title: "less_slow.cpp: Less Slow Coding Practices in C++ 20, C, CUDA, PTX, & Assembly"
+    title: "less_slow.cpp: Measuring the Real Cost of Abstractions in C++, CUDA, PTX and Assembly"
     repository-code: https://github.com/ashvardanian/less_slow.cpp
-    doi: 10.5281/zenodo.21612057
+    doi: 10.5281/zenodo.21612056
     authors:
       - family-names: Vardanian
         given-names: Ash
   - type: software
-    title: "less_slow.rs: Less Slow Coding Practices in Rust"
+    title: "less_slow.rs: Measuring the Real Cost of Abstractions in Rust"
     repository-code: https://github.com/ashvardanian/less_slow.rs
     authors:
       - family-names: Vardanian
