@@ -17,7 +17,6 @@ stale=""
 [ "$(cat VERSION)" = "$version" ] || stale="$stale VERSION"
 grep -qxF "version = \"$version\"" pyproject.toml || stale="$stale pyproject.toml"
 [ "$(sed -n '/^name = "less-slow"$/{n;p;q;}' uv.lock)" = "version = \"$version\"" ] || stale="$stale uv.lock"
-grep -qxF "version: $version" CITATION.cff || stale="$stale CITATION.cff"
 if [ -n "$stale" ]; then
     echo "check-release: these files don't carry $version:$stale"
     exit 1

@@ -36,7 +36,7 @@ cuda = ["nvmath-python[cu12]>=1.0.0"]
 numba = ["numba"]
 
 [project.urls]
-Citation = "https://doi.org/10.5281/zenodo.21626661"
+Citation = "https://doi.org/10.5281/zenodo.21626660"
 "For C++" = "https://github.com/ashvardanian/less_slow.cpp"
 "For Rust" = "https://github.com/ashvardanian/less_slow.rs"
 Homepage = "https://github.com/ashvardanian/less_slow.py"
